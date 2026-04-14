@@ -49,12 +49,33 @@ func DoSync(
 		return nil, fmt.Errorf("scan: %w", err)
 	}
 
+	// Фаза 1: stat-diff — без чтения файлов, только mtime/size
+	savedStat, err := services.LoadFileStat(services.FileStatPath(svcID))
+	if err != nil {
+		return nil, fmt.Errorf("load file-stat: %w", err)
+	}
+	statDiff := DiffStat(current, savedStat)
+
+	// Ранний выход: ничего не изменилось
+	if len(statDiff.Added) == 0 && len(statDiff.MaybeModified) == 0 && len(statDiff.Deleted) == 0 {
+		return &DoSyncResult{Errors: []SyncError{}}, nil
+	}
+
+	// Фаза 2: хэш только для кандидатов (Added + MaybeModified)
+	candidates := make(map[string]struct{}, len(statDiff.Added)+len(statDiff.MaybeModified))
+	for _, k := range statDiff.Added {
+		candidates[k] = struct{}{}
+	}
+	for _, k := range statDiff.MaybeModified {
+		candidates[k] = struct{}{}
+	}
+
 	savedMap, err := services.LoadFileMap(services.FileMapPath(svcID))
 	if err != nil {
 		return nil, fmt.Errorf("load file-map: %w", err)
 	}
 
-	diff := DiffHash(current, savedMap)
+	diff := DiffHashCandidates(current, savedMap, candidates)
 
 	result := &DoSyncResult{
 		Errors: diff.ReadErrors,

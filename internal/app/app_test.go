@@ -155,6 +155,97 @@ func TestApp_ListServicesSorted(t *testing.T) {
 	}
 }
 
+// A15: App_GetSymbolContext_IncludesCode
+func TestApp_GetSymbolContext_IncludesCode(t *testing.T) {
+	a := setupApp(t)
+	root := t.TempDir()
+	svcID, err := a.AddService(root, "codesvc", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(root, "foo.py"), []byte("class Foo:\n    pass\n"), 0o644)
+
+	if _, err := a.DoSync(svcID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Найти symbolId через поиск
+	res, err := a.Search(svcID, "Foo", DefaultSearchLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Sym) == 0 {
+		t.Fatal("no symbols found after sync")
+	}
+	symID := res.Sym[0][0].(string)
+
+	info, err := a.GetSymbolContext(svcID, symID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, ok := info.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map, got %T", info)
+	}
+	code, ok := m["code"].(string)
+	if !ok || code == "" {
+		t.Errorf("expected non-empty code in GetSymbolContext, got %v", m["code"])
+	}
+}
+
+// A16: App_GetSymbolFull_ReturnsAllFields
+func TestApp_GetSymbolFull_ReturnsAllFields(t *testing.T) {
+	a := setupApp(t)
+	root := t.TempDir()
+	svcID, err := a.AddService(root, "fullsvc", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(root, "bar.py"), []byte("class Bar:\n    def method(self):\n        pass\n"), 0o644)
+
+	if _, err := a.DoSync(svcID); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := a.Search(svcID, "Bar", DefaultSearchLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Sym) == 0 {
+		t.Fatal("no symbols found after sync")
+	}
+	symID := res.Sym[0][0].(string)
+
+	full, err := a.GetSymbolFull(svcID, symID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.SymbolID != symID {
+		t.Errorf("symbolId mismatch: got %q", full.SymbolID)
+	}
+	if full.Code == "" {
+		t.Error("expected non-empty code")
+	}
+	if full.Callers == nil {
+		t.Error("callers must be non-nil slice (empty is ok)")
+	}
+	if full.Edges == nil {
+		t.Error("edges must be non-nil slice (empty is ok)")
+	}
+}
+
+// A17: App_GetSymbolFull_UnknownSymbol_Errors
+func TestApp_GetSymbolFull_UnknownSymbol_Errors(t *testing.T) {
+	a := setupApp(t)
+	root := t.TempDir()
+	svcID, _ := a.AddService(root, "fsvc2", "")
+
+	_, err := a.GetSymbolFull(svcID, "s:py:Ghost:x.py:0", 1)
+	if err == nil {
+		t.Error("expected error for unknown symbol")
+	}
+}
+
 // A13: App_PrepareSync_UnknownService_Errors
 func TestApp_PrepareSync_UnknownService_Errors(t *testing.T) {
 	a := setupApp(t)

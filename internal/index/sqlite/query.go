@@ -138,6 +138,7 @@ func getFileContextByField(db *sql.DB, field, value string) (*FileContextRow, er
 type SymbolContextRow struct {
 	SymbolID  string
 	FileKey   string
+	RelPath   string
 	Kind      string
 	Name      string
 	Qualified string
@@ -147,18 +148,62 @@ type SymbolContextRow struct {
 
 func GetSymbolContext(db *sql.DB, symbolID string) (*SymbolContextRow, error) {
 	row := db.QueryRow(
-		`SELECT s.symbol_id, f.key, s.kind, s.name, s.qualified, s.start_line, s.end_line
+		`SELECT s.symbol_id, f.key, f.rel_path, s.kind, s.name, s.qualified, s.start_line, s.end_line
 		 FROM symbols s JOIN files f ON s.file_id = f.file_id
 		 WHERE s.symbol_id = ?`, symbolID,
 	)
 	var r SymbolContextRow
-	if err := row.Scan(&r.SymbolID, &r.FileKey, &r.Kind, &r.Name, &r.Qualified, &r.StartLine, &r.EndLine); err != nil {
+	if err := row.Scan(&r.SymbolID, &r.FileKey, &r.RelPath, &r.Kind, &r.Name, &r.Qualified, &r.StartLine, &r.EndLine); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("get symbol %q: %w", symbolID, err)
 	}
 	return &r, nil
+}
+
+// CallerRef — файл, вызывающий модуль/символ.
+type CallerRef struct {
+	FileKey string `json:"fileKey"`
+	Via     string `json:"via"` // moduleId или symbolId, на который указывает calls-ребро
+}
+
+// GetCallers возвращает файлы с calls-рёбрами в symbolId или moduleId символа.
+func GetCallers(db *sql.DB, symbolID, moduleID string) ([]CallerRef, error) {
+	targets := []string{symbolID}
+	if moduleID != "" {
+		targets = append(targets, moduleID)
+	}
+	ph := "?" + strings.Repeat(",?", len(targets)-1)
+	args := make([]any, len(targets))
+	for i, t := range targets {
+		args[i] = t
+	}
+	rows, err := db.Query(
+		`SELECT COALESCE(f.key, e.from_id), e.to_id
+		 FROM edges e
+		 LEFT JOIN files f ON f.file_id = e.from_id
+		 WHERE e.type = 'calls' AND e.to_id IN (`+ph+`)`, args...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get callers: %w", err)
+	}
+	defer rows.Close()
+
+	seen := map[string]bool{}
+	callers := []CallerRef{}
+	for rows.Next() {
+		var fileKey, toID string
+		if err := rows.Scan(&fileKey, &toID); err != nil {
+			return nil, err
+		}
+		if seen[fileKey] {
+			continue
+		}
+		seen[fileKey] = true
+		callers = append(callers, CallerRef{FileKey: fileKey, Via: toID})
+	}
+	return callers, rows.Err()
 }
 
 // NeighborEdge — ребро в графе (формат basic: тройка [type, from, to]).
@@ -171,7 +216,7 @@ func GetNeighbors(db *sql.DB, nodeID string, depth int, edgeTypes []string) ([]N
 
 	visited := map[string]bool{nodeID: true}
 	frontier := []string{nodeID}
-	var result []NeighborEdge
+	result := []NeighborEdge{}
 	edgeSeen := map[string]bool{}
 
 	for d := 0; d < depth && len(frontier) > 0; d++ {

@@ -114,3 +114,53 @@ func TestDiffStat_Deleted_Sorted(t *testing.T) {
 		t.Errorf("Deleted not sorted: %v", res.Deleted)
 	}
 }
+
+// TestDiffHashCandidates_EmptyCandidates_NoFileReads проверяет, что при пустом
+// candidates файлы не попадают в Added/Modified (нет IO на чтение).
+func TestDiffHashCandidates_EmptyCandidates_NoFileReads(t *testing.T) {
+	// savedMap содержит файлы — они не кандидаты → должны считаться неизменёнными
+	saved := services.FileMap{
+		"a.py": "b3:aaaa",
+		"b.py": "b3:bbbb",
+	}
+	ts := time.Unix(1000, 0)
+	current := []FileEntry{
+		{Key: "a.py", AbsPath: "/nonexistent/a.py", RelPath: "a.py", ModTime: ts, Size: 10},
+		{Key: "b.py", AbsPath: "/nonexistent/b.py", RelPath: "b.py", ModTime: ts, Size: 10},
+	}
+	// Пустой candidates → HashFile вызываться не должен (AbsPath несуществующие)
+	res := DiffHashCandidates(current, saved, map[string]struct{}{})
+	if len(res.Added) != 0 || len(res.Modified) != 0 || len(res.Deleted) != 0 {
+		t.Errorf("empty candidates: expected 0/0/0, got added=%v modified=%v deleted=%v",
+			res.Added, res.Modified, res.Deleted)
+	}
+}
+
+// TestDiffHashCandidates_OnlyHashesCandidates проверяет, что хэшируются
+// только файлы-кандидаты, а остальные игнорируются.
+func TestDiffHashCandidates_OnlyHashesCandidates(t *testing.T) {
+	// b.py — не кандидат и AbsPath несуществующий (чтение вызовет ошибку если попытаться)
+	// a.py — кандидат, не в saved → Added
+	saved := services.FileMap{"b.py": "b3:bbbb"}
+	current := []FileEntry{
+		{Key: "a.py", AbsPath: "/nonexistent/a.py", RelPath: "a.py"},
+		{Key: "b.py", AbsPath: "/nonexistent/b.py", RelPath: "b.py"},
+	}
+	candidates := map[string]struct{}{"a.py": {}}
+
+	// a.py — кандидат, но файл не существует → ReadError + Deleted (из saved пустого)
+	// b.py — не кандидат → не трогается, нет ReadError
+	res := DiffHashCandidates(current, saved, candidates)
+
+	for _, e := range res.ReadErrors {
+		if e.Key == "b.py" {
+			t.Error("b.py should not be hashed (not a candidate)")
+		}
+	}
+	// b.py не удалён (он в current)
+	for _, d := range res.Deleted {
+		if d == "b.py" {
+			t.Error("b.py should not be in Deleted")
+		}
+	}
+}

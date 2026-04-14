@@ -90,3 +90,53 @@ func DiffHash(current []FileEntry, saved services.FileMap) HashDiffResult {
 	sort.Strings(res.Deleted)
 	return res
 }
+
+// DiffHashCandidates — как DiffHash, но хэширует только файлы из candidates.
+// Файлы вне candidates считаются неизменёнными (не попадают в Added/Modified).
+// Используется совместно с DiffStat для избежания лишних IO.
+func DiffHashCandidates(current []FileEntry, saved services.FileMap, candidates map[string]struct{}) HashDiffResult {
+	var res HashDiffResult
+	curKeys := make(map[string]struct{}, len(current))
+
+	for _, f := range current {
+		curKeys[f.Key] = struct{}{}
+
+		if _, isCandidate := candidates[f.Key]; !isCandidate {
+			// mtime/size не изменились — пропускаем хэш
+			continue
+		}
+
+		hash, err := HashFile(f.AbsPath)
+		if err != nil {
+			if _, wasSaved := saved[f.Key]; wasSaved {
+				res.Deleted = append(res.Deleted, f.Key)
+			}
+			res.ReadErrors = append(res.ReadErrors, SyncError{
+				Key:     f.Key,
+				AbsPath: f.AbsPath,
+				Stage:   "hash",
+				Code:    "HASH_ERROR",
+				Message: err.Error(),
+			})
+			continue
+		}
+
+		if savedHash, ok := saved[f.Key]; !ok {
+			res.Added = append(res.Added, f)
+		} else if savedHash != hash {
+			res.Modified = append(res.Modified, f)
+		}
+		// savedHash == hash: mtime изменился, но содержимое то же — пропускаем
+	}
+
+	for key := range saved {
+		if _, ok := curKeys[key]; !ok {
+			res.Deleted = append(res.Deleted, key)
+		}
+	}
+
+	sort.Slice(res.Added, func(i, j int) bool { return res.Added[i].Key < res.Added[j].Key })
+	sort.Slice(res.Modified, func(i, j int) bool { return res.Modified[i].Key < res.Modified[j].Key })
+	sort.Strings(res.Deleted)
+	return res
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mcp-indexer/internal/app"
+	"mcp-indexer/internal/services"
 	"strings"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -13,6 +14,17 @@ import (
 
 // Register регистрирует все MCP tools на сервере.
 func Register(srv *server.MCPServer, a *app.App) {
+	srv.AddTool(
+		mcpgo.NewTool("getInfo",
+			mcpgo.WithDescription("General info about the mcp-indexer instance"),
+		),
+		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			return jsonResult(map[string]string{
+				"configPath": services.AppHome(),
+			})
+		},
+	)
+
 	srv.AddTool(
 		mcpgo.NewTool("getServiceList",
 			mcpgo.WithDescription("List all registered service IDs"),
@@ -152,6 +164,25 @@ func Register(srv *server.MCPServer, a *app.App) {
 			id := req.GetString("serviceId", "")
 			symID := req.GetString("symbolId", "")
 			res, err := a.GetSymbolContext(id, symID)
+			if err != nil {
+				return errResult(err), nil
+			}
+			return jsonResult(res)
+		},
+	)
+
+	srv.AddTool(
+		mcpgo.NewTool("getSymbolFull",
+			mcpgo.WithDescription("Symbol metadata + source code + callers + graph edges in one call"),
+			mcpgo.WithString("serviceId", mcpgo.Required()),
+			mcpgo.WithString("symbolId", mcpgo.Required()),
+			mcpgo.WithNumber("edgeDepth", mcpgo.Description("BFS depth for edges (default 1)")),
+		),
+		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			id := req.GetString("serviceId", "")
+			symID := req.GetString("symbolId", "")
+			depth := req.GetInt("edgeDepth", 1)
+			res, err := a.GetSymbolFull(id, symID, depth)
 			if err != nil {
 				return errResult(err), nil
 			}

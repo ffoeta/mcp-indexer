@@ -3,9 +3,12 @@ package sqlite
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"mcp-indexer/internal/index"
 )
+
+const batchInsert = 200 // строк на один multi-row INSERT
 
 func UpsertModule(tx *sql.Tx, row index.ModuleRow) error {
 	_, err := tx.Exec(
@@ -66,14 +69,22 @@ func InsertTermPostings(tx *sql.Tx, rows []index.TermPosting) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	stmt, err := tx.Prepare(`INSERT INTO term_postings(term, doc_id, weight) VALUES(?,?,?)`)
-	if err != nil {
-		return wrap(err, "prepare postings")
-	}
-	defer stmt.Close()
-	for _, r := range rows {
-		if _, err := stmt.Exec(r.Term, r.DocID, r.Weight); err != nil {
-			return wrap(err, "insert posting "+r.Term)
+	for i := 0; i < len(rows); i += batchInsert {
+		end := i + batchInsert
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[i:end]
+		ph := "(?,?,?)" + strings.Repeat(",(?,?,?)", len(chunk)-1)
+		args := make([]any, 0, len(chunk)*3)
+		for _, r := range chunk {
+			args = append(args, r.Term, r.DocID, r.Weight)
+		}
+		if _, err := tx.Exec(
+			`INSERT INTO term_postings(term, doc_id, weight) VALUES `+ph,
+			args...,
+		); err != nil {
+			return wrap(err, "batch insert term_postings")
 		}
 	}
 	return nil

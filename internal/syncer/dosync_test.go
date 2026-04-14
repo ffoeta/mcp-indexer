@@ -219,3 +219,30 @@ func TestDoSync_DeletedFile_RemovedFromMap(t *testing.T) {
 		t.Error("a.py should be removed from file-map after delete")
 	}
 }
+
+// TestDoSync_NoChanges_EarlyExit проверяет, что повторный sync без изменений
+// возвращает Added=0, Modified=0, Deleted=0.
+func TestDoSync_NoChanges_EarlyExit(t *testing.T) {
+	svcID, svc, root := setupDoSync(t)
+	writeFile(t, filepath.Join(root, "a.py"), "x=1")
+	writeFile(t, filepath.Join(root, "b.py"), "y=2")
+	store := testutil.NewTestStore(t)
+
+	res1, err := DoSync(svc, svcID, store, nil, makeNorm())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res1.Added != 2 {
+		t.Fatalf("first sync: expected 2 added, got %d", res1.Added)
+	}
+
+	// Второй sync без изменений → ранний выход
+	res2, err := DoSync(svc, svcID, store, nil, makeNorm())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Added != 0 || res2.Modified != 0 || res2.Deleted != 0 {
+		t.Errorf("no-op sync: expected 0/0/0, got added=%d modified=%d deleted=%d",
+			res2.Added, res2.Modified, res2.Deleted)
+	}
+}

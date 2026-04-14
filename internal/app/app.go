@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"fmt"
 	"mcp-indexer/internal/parse"
 	"mcp-indexer/internal/parse/java"
@@ -205,7 +206,109 @@ func (a *App) GetSymbolContext(svcID, symbolID string) (interface{}, error) {
 	if row == nil {
 		return nil, fmt.Errorf("symbol %q not found", symbolID)
 	}
-	return row, nil
+	entry, ok := a.Registry.Get(svcID)
+	if !ok {
+		return row, nil
+	}
+	code, _ := readLines(filepath.Join(entry.RootAbs, row.RelPath), row.StartLine, row.EndLine)
+	return map[string]interface{}{
+		"symbolId":  row.SymbolID,
+		"fileKey":   row.FileKey,
+		"kind":      row.Kind,
+		"name":      row.Name,
+		"qualified": row.Qualified,
+		"startLine": row.StartLine,
+		"endLine":   row.EndLine,
+		"code":      code,
+	}, nil
+}
+
+// SymbolFullResponse — полный контекст символа: метаданные + код + callers.
+type SymbolFullResponse struct {
+	SymbolID  string               `json:"symbolId"`
+	FileKey   string               `json:"fileKey"`
+	Kind      string               `json:"kind"`
+	Name      string               `json:"name"`
+	Qualified string               `json:"qualified"`
+	StartLine int                  `json:"startLine"`
+	EndLine   int                  `json:"endLine"`
+	Code      string               `json:"code"`
+	Callers   []sqliteq.CallerRef  `json:"callers"`
+	Edges     []sqliteq.NeighborEdge `json:"edges"`
+}
+
+func (a *App) GetSymbolFull(svcID, symbolID string, edgeDepth int) (*SymbolFullResponse, error) {
+	store, err := a.getStore(svcID)
+	if err != nil {
+		return nil, err
+	}
+	row, err := sqliteq.GetSymbolContext(store.DB(), symbolID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, fmt.Errorf("symbol %q not found", symbolID)
+	}
+
+	// moduleId файла символа (для callers по модулю)
+	var moduleID string
+	_ = store.DB().QueryRow(
+		`SELECT COALESCE(module_id, '') FROM files WHERE key = ?`, row.FileKey,
+	).Scan(&moduleID)
+
+	callers, err := sqliteq.GetCallers(store.DB(), symbolID, moduleID)
+	if err != nil {
+		return nil, err
+	}
+
+	edges, err := sqliteq.GetNeighbors(store.DB(), symbolID, edgeDepth, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var code string
+	if entry, ok := a.Registry.Get(svcID); ok {
+		code, _ = readLines(filepath.Join(entry.RootAbs, row.RelPath), row.StartLine, row.EndLine)
+	}
+
+	return &SymbolFullResponse{
+		SymbolID:  row.SymbolID,
+		FileKey:   row.FileKey,
+		Kind:      row.Kind,
+		Name:      row.Name,
+		Qualified: row.Qualified,
+		StartLine: row.StartLine,
+		EndLine:   row.EndLine,
+		Code:      code,
+		Callers:   callers,
+		Edges:     edges,
+	}, nil
+}
+
+// readLines читает строки [startLine, endLine] из файла (1-based, включительно).
+func readLines(absPath string, startLine, endLine int) (string, error) {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	var sb strings.Builder
+	scanner := bufio.NewScanner(f)
+	line := 0
+	for scanner.Scan() {
+		line++
+		if line > endLine {
+			break
+		}
+		if line >= startLine {
+			if sb.Len() > 0 {
+				sb.WriteByte('\n')
+			}
+			sb.WriteString(scanner.Text())
+		}
+	}
+	return sb.String(), scanner.Err()
 }
 
 func (a *App) GetNeighbors(svcID, nodeID string, depth int, edgeTypes []string) (interface{}, error) {
