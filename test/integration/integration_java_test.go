@@ -17,7 +17,7 @@ func TestIntegration_Java_LargeFile_FullIndex(t *testing.T) {
 	root := t.TempDir()
 	copyFixture(t, root, "java/LargePipeline.java")
 
-	svcID, err := a.AddService(root, "java-large", "")
+	svcID, err := a.AddService(root, "java-large", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestIntegration_Java_LinkedFiles_WithStaticMembers(t *testing.T) {
 	root := t.TempDir()
 	copyLinkedJavaFixtures(t, root)
 
-	svcID, err := a.AddService(root, "java-linked", "")
+	svcID, err := a.AddService(root, "java-linked", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -78,3 +78,33 @@ func (r *Registry) List() []string {
 	}
 	return ids
 }
+
+// ListFull возвращает копию всех записей (id → entry).
+func (r *Registry) ListFull() map[string]ServiceEntry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]ServiceEntry, len(r.m))
+	for id, e := range r.m {
+		out[id] = e
+	}
+	return out
+}
+
+// UpdateMeta обновляет description и mainEntities у существующей записи.
+// Пустые значения игнорируются (не затирают существующие).
+func (r *Registry) UpdateMeta(id, description string, mainEntities []string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.m[id]
+	if !ok {
+		return fmt.Errorf("service %q not found", id)
+	}
+	if description != "" {
+		e.Description = description
+	}
+	if len(mainEntities) > 0 {
+		e.MainEntities = mainEntities
+	}
+	r.m[id] = e
+	return nil
+}

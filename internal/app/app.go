@@ -48,7 +48,7 @@ func NewFromRegistry(reg *services.Registry) *App {
 
 // ---- service management ----
 
-func (a *App) AddService(rootAbs, svcID, name string) (string, error) {
+func (a *App) AddService(rootAbs, svcID, name, description string, mainEntities []string) (string, error) {
 	abs, err := filepath.Abs(rootAbs)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
@@ -61,7 +61,7 @@ func (a *App) AddService(rootAbs, svcID, name string) (string, error) {
 	}
 	svcID = sanitizeID(svcID)
 
-	entry := services.ServiceEntry{RootAbs: abs, Name: name}
+	entry := services.ServiceEntry{RootAbs: abs, Name: name, Description: description, MainEntities: mainEntities}
 	if err := a.Registry.Add(svcID, entry); err != nil {
 		return "", err
 	}
@@ -87,6 +87,13 @@ func (a *App) AddService(rootAbs, svcID, name string) (string, error) {
 		return "", err
 	}
 	return svcID, nil
+}
+
+func (a *App) UpdateServiceMeta(svcID, description string, mainEntities []string) error {
+	if err := a.Registry.UpdateMeta(svcID, description, mainEntities); err != nil {
+		return err
+	}
+	return a.Registry.Save()
 }
 
 func (a *App) GetServiceInfo(svcID string) (interface{}, error) {

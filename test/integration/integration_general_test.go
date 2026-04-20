@@ -39,7 +39,7 @@ func setupService(t *testing.T) (a *app.App, svcID string, root string) {
 	a = setupApp(t)
 	root = t.TempDir()
 	writeMultiFileFixture(t, root)
-	svcID, err := a.AddService(root, "fixture", "")
+	svcID, err := a.AddService(root, "fixture", "", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func addServiceWithFile(t *testing.T, a *app.App, svcID, testdataRel string) {
 	t.Helper()
 	root := t.TempDir()
 	copyFixture(t, root, testdataRel)
-	if _, err := a.AddService(root, svcID, ""); err != nil {
+	if _, err := a.AddService(root, svcID, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
 

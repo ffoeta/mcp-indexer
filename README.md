@@ -90,14 +90,16 @@ go run ./cmd list
 ### Зарегистрировать проект
 
 ```bash
-go run ./cmd add <rootAbs> [--id <serviceId>] [--name <название>]
+go run ./cmd add <rootAbs> [--id <serviceId>] [--name <название>] [--description <описание>] [--entities <e1,e2>]
 
 # Примеры:
 go run ./cmd add /home/user/myapp
 go run ./cmd add /home/user/myapp --id myapp --name "My App"
+go run ./cmd add /home/user/myapp --id myapp --description "Job search backend" --entities "vacancy,employer,resume"
 ```
 
-`--id` по умолчанию берётся из имени директории. Должен быть уникальным.
+`--id` по умолчанию берётся из имени директории. Должен быть уникальным.  
+`--entities` — список ключевых доменных сущностей через запятую.
 
 ### Предпросмотр изменений (без записи)
 
@@ -206,20 +208,24 @@ $APP_HOME/
 
 ## MCP-инструменты (для LLM-агентов)
 
+Первый вызов — `help`: возвращает полное описание сервера и всех инструментов.
+
 | Инструмент | Обязательные параметры | Описание |
 |---|---|---|
-| `getInfo` | — | Путь к конфигу и версия |
-| `getServiceList` | — | Список зарегистрированных сервисов |
-| `addService` | `rootAbs` | Зарегистрировать новый сервис |
-| `getServiceInfo` | `serviceId` | Детали и конфиг сервиса |
-| `prepareSync` | `serviceId` | Предпросмотр изменений (без записи) |
-| `doSync` | `serviceId` | Хэш-дифф + применить к индексу |
-| `getProjectOverview` | `serviceId` | Счётчики файлов/модулей/символов/рёбер |
+| `help` | — | Описание сервера и всех инструментов |
+| `service__list__get` | — | Список сервисов с метаданными (id, name, description, mainEntities) |
+| `service__add` | `rootAbs` | Зарегистрировать новый сервис; принимает `description`, `mainEntities` (JSON array) |
+| `service__info__get` | `serviceId` | Детали и конфиг сервиса |
+| `service__meta__update` | `serviceId` | Обновить `description` и/или `mainEntities` существующего сервиса |
+| `sync__prepare` | `serviceId` | Предпросмотр изменений (без записи) |
+| `sync__do` | `serviceId` | Хэш-дифф + применить к индексу |
+| `project__overview__get` | `serviceId` | Счётчики файлов/модулей/символов/рёбер |
 | `search` | `serviceId`, `query` | Поиск с опциональным JSON `limits` |
-| `getFileContext` | `serviceId`, `path` | Модуль, импорты и символы файла |
-| `getSymbolContext` | `serviceId`, `symbolId` | Детали символа |
-| `getSymbolFull` | `serviceId`, `symbolId` | Символ + код + вызывающие + рёбра |
-| `getNeighbors` | `serviceId`, `nodeId` | BFS в графе зависимостей |
+| `file__context__get` | `serviceId`, `path` | Модуль, импорты и символы файла |
+| `symbol__context__get` | `serviceId`, `symbolId` | Детали символа + исходный код |
+| `symbol__full__get` | `serviceId`, `symbolId` | Символ + код + вызывающие + рёбра графа |
+| `graph__neighbors__get` | `serviceId`, `nodeId` | BFS в графе зависимостей |
+| `debug__config__get` | — | [Debug] Путь к конфигу; не нужен в обычной работе |
 
 ---
 

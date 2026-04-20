@@ -74,13 +74,21 @@ func listCmd() *cobra.Command {
 }
 
 func addCmd() *cobra.Command {
-	var svcID, name string
+	var svcID, name, description, mainEntitiesRaw string
 	cmd := &cobra.Command{
 		Use:   "add <rootAbs>",
 		Short: "Register a new service",
 		Args:  cobra.ExactArgs(1),
 		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
-			id, err := a.AddService(args[0], svcID, name)
+			var mainEntities []string
+			if mainEntitiesRaw != "" {
+				for _, e := range strings.Split(mainEntitiesRaw, ",") {
+					if s := strings.TrimSpace(e); s != "" {
+						mainEntities = append(mainEntities, s)
+					}
+				}
+			}
+			id, err := a.AddService(args[0], svcID, name, description, mainEntities)
 			if err != nil {
 				return err
 			}
@@ -90,6 +98,8 @@ func addCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&svcID, "id", "", "service ID (default: dir name)")
 	cmd.Flags().StringVar(&name, "name", "", "human-readable name")
+	cmd.Flags().StringVar(&description, "description", "", "short description")
+	cmd.Flags().StringVar(&mainEntitiesRaw, "entities", "", "comma-separated main domain entities")
 	return cmd
 }
 

@@ -15,8 +15,17 @@ import (
 // Register регистрирует все MCP tools на сервере.
 func Register(srv *server.MCPServer, a *app.App) {
 	srv.AddTool(
-		mcpgo.NewTool("getInfo",
-			mcpgo.WithDescription("General info about the mcp-indexer instance"),
+		mcpgo.NewTool("help",
+			mcpgo.WithDescription("Description of this MCP server and all available tools"),
+		),
+		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			return jsonResult(helpPayload())
+		},
+	)
+
+	srv.AddTool(
+		mcpgo.NewTool("debug__config__get",
+			mcpgo.WithDescription("[Debug] General info about the mcp-indexer instance (config path, home dir). Not needed in normal workflows."),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			return jsonResult(map[string]string{
@@ -26,26 +35,35 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("getServiceList",
-			mcpgo.WithDescription("List all registered service IDs"),
+		mcpgo.NewTool("service__list__get",
+			mcpgo.WithDescription("List all registered services with their metadata (id, name, description, mainEntities, rootAbs)"),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-			return jsonResult(a.Registry.List())
+			return jsonResult(a.Registry.ListFull())
 		},
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("addService",
+		mcpgo.NewTool("service__add",
 			mcpgo.WithDescription("Register a new service for indexing"),
 			mcpgo.WithString("rootAbs", mcpgo.Required(), mcpgo.Description("Absolute path to service root")),
 			mcpgo.WithString("serviceId", mcpgo.Description("Optional service ID (derived from dir name if omitted)")),
 			mcpgo.WithString("name", mcpgo.Description("Optional human-readable name")),
+			mcpgo.WithString("description", mcpgo.Description("Optional short description of the service")),
+			mcpgo.WithString("mainEntities", mcpgo.Description(`Optional JSON array of main domain entities, e.g. ["supplier","order"]`)),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			rootAbs := req.GetString("rootAbs", "")
 			svcID := req.GetString("serviceId", "")
 			name := req.GetString("name", "")
-			id, err := a.AddService(rootAbs, svcID, name)
+			description := req.GetString("description", "")
+			var mainEntities []string
+			if me := req.GetString("mainEntities", ""); me != "" {
+				if err := json.Unmarshal([]byte(me), &mainEntities); err != nil {
+					return errResult(fmt.Errorf("invalid mainEntities: %w", err)), nil
+				}
+			}
+			id, err := a.AddService(rootAbs, svcID, name, description, mainEntities)
 			if err != nil {
 				return errResult(err), nil
 			}
@@ -54,7 +72,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("getServiceInfo",
+		mcpgo.NewTool("service__info__get",
 			mcpgo.WithDescription("Get info about a registered service"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -69,7 +87,30 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("prepareSync",
+		mcpgo.NewTool("service__meta__update",
+			mcpgo.WithDescription("Update description and/or mainEntities of a registered service"),
+			mcpgo.WithString("serviceId", mcpgo.Required()),
+			mcpgo.WithString("description", mcpgo.Description("New description (omit to keep existing)")),
+			mcpgo.WithString("mainEntities", mcpgo.Description(`New main entities as JSON array, e.g. ["supplier","order"] (omit to keep existing)`)),
+		),
+		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			id := req.GetString("serviceId", "")
+			description := req.GetString("description", "")
+			var mainEntities []string
+			if me := req.GetString("mainEntities", ""); me != "" {
+				if err := json.Unmarshal([]byte(me), &mainEntities); err != nil {
+					return errResult(fmt.Errorf("invalid mainEntities: %w", err)), nil
+				}
+			}
+			if err := a.UpdateServiceMeta(id, description, mainEntities); err != nil {
+				return errResult(err), nil
+			}
+			return jsonResult(map[string]string{"status": "ok"})
+		},
+	)
+
+	srv.AddTool(
+		mcpgo.NewTool("sync__prepare",
 			mcpgo.WithDescription("Stat-only diff: what would change (no writes)"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -84,7 +125,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("doSync",
+		mcpgo.NewTool("sync__do",
 			mcpgo.WithDescription("Hash diff + apply to index"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -99,7 +140,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("getProjectOverview",
+		mcpgo.NewTool("project__overview__get",
 			mcpgo.WithDescription("Summary counts: files, modules, symbols, edges"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -138,7 +179,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("getFileContext",
+		mcpgo.NewTool("file__context__get",
 			mcpgo.WithDescription("File info: module, imports, symbols"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("File key (pathPrefix+relPath)")),
@@ -155,7 +196,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("getSymbolContext",
+		mcpgo.NewTool("symbol__context__get",
 			mcpgo.WithDescription("Symbol info by symbolId"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("symbolId", mcpgo.Required()),
@@ -172,7 +213,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("getSymbolFull",
+		mcpgo.NewTool("symbol__full__get",
 			mcpgo.WithDescription("Symbol metadata + source code + callers + graph edges in one call"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("symbolId", mcpgo.Required()),
@@ -191,7 +232,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("getNeighbors",
+		mcpgo.NewTool("graph__neighbors__get",
 			mcpgo.WithDescription("BFS neighbors in the dependency graph"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("nodeId", mcpgo.Required()),
@@ -213,6 +254,97 @@ func Register(srv *server.MCPServer, a *app.App) {
 			return jsonResult(res)
 		},
 	)
+}
+
+// helpPayload возвращает описание сервера и всех инструментов.
+func helpPayload() map[string]interface{} {
+	type toolDoc struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Params      []string `json:"params,omitempty"`
+	}
+	return map[string]interface{}{
+		"server":      "mcp-indexer",
+		"description": "MCP server for source code indexing. Scans Python and Java codebases, builds a SQLite index of files, modules, symbols, and dependency edges. Designed for LLM agents that need to navigate and understand large codebases.",
+		"workflow": []string{
+			"1. service__add       — register a codebase root (once)",
+			"2. sync__do           — index or re-index the codebase",
+			"3. service__list__get — see all registered services",
+			"4. search             — find symbols/files/modules by keyword",
+			"5. file__context__get / symbol__context__get / symbol__full__get — drill down",
+			"6. graph__neighbors__get — traverse the dependency graph",
+		},
+		"tools": []toolDoc{
+			{
+				Name:        "service__add",
+				Description: "Register a new service (codebase root) for indexing.",
+				Params:      []string{"rootAbs (required)", "serviceId?", "name?", "description?", "mainEntities? (JSON array)"},
+			},
+			{
+				Name:        "service__list__get",
+				Description: "List all registered services with full metadata: id, name, description, mainEntities, rootAbs.",
+			},
+			{
+				Name:        "service__info__get",
+				Description: "Detailed info about one service: entry + config.",
+				Params:      []string{"serviceId (required)"},
+			},
+			{
+				Name:        "service__meta__update",
+				Description: "Update description and/or mainEntities of an existing service. Call this after exploring or syncing a service to document what it does. Non-empty values overwrite; omitted values are kept.",
+				Params:      []string{"serviceId (required)", "description?", "mainEntities? (JSON array)"},
+			},
+			{
+				Name:        "sync__prepare",
+				Description: "Stat-only dry run: shows which files would be added/modified/deleted without writing anything.",
+				Params:      []string{"serviceId (required)"},
+			},
+			{
+				Name:        "sync__do",
+				Description: "Hash diff + apply changes to the SQLite index. Run after service__add or when files change.",
+				Params:      []string{"serviceId (required)"},
+			},
+			{
+				Name:        "project__overview__get",
+				Description: "Summary counts: total files, modules, symbols, edges.",
+				Params:      []string{"serviceId (required)"},
+			},
+			{
+				Name:        "search",
+				Description: "Full-text search across symbols, files, and modules by keyword(s).",
+				Params:      []string{"serviceId (required)", "query (required)", `limits? (JSON: {"sym":20,"file":10,"mod":5})`},
+			},
+			{
+				Name:        "file__context__get",
+				Description: "File details: owning module, all imports, all defined symbols.",
+				Params:      []string{"serviceId (required)", "path (required) — file key, e.g. src:pkg/collector.py"},
+			},
+			{
+				Name:        "symbol__context__get",
+				Description: "Symbol metadata + source code snippet.",
+				Params:      []string{"serviceId (required)", "symbolId (required)"},
+			},
+			{
+				Name:        "symbol__full__get",
+				Description: "Symbol metadata + source code + callers + graph edges in one call.",
+				Params:      []string{"serviceId (required)", "symbolId (required)", "edgeDepth? (default 1)"},
+			},
+			{
+				Name:        "graph__neighbors__get",
+				Description: "BFS traversal of the dependency graph from any node (file, module, symbol).",
+				Params:      []string{"serviceId (required)", "nodeId (required)", "depth? (default 2)", "edgeTypes? (CSV: contains,imports,defines,calls,base)"},
+			},
+			{
+				Name:        "debug__config__get",
+				Description: "[Debug only] Returns config home path. Not needed in normal agent workflows.",
+			},
+		},
+		"notes": []string{
+			"After syncing or exploring a service, consider calling service__meta__update to document its purpose and key domain entities — this helps future sessions get up to speed faster.",
+			"Symbol IDs have the format s:{lang}:{qualified}:{fileKey}:{startLine}. Obtain them via search or file__context__get.",
+			"File keys have the format {pathPrefix}{relPath}, e.g. src:pkg/collector.py. pathPrefix is configured per service.",
+		},
+	}
 }
 
 func jsonResult(v interface{}) (*mcpgo.CallToolResult, error) {
