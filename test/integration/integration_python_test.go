@@ -96,7 +96,7 @@ func TestIntegration_Python_LargeFile_FullIndex(t *testing.T) {
 	root := t.TempDir()
 	copyFixture(t, root, "python/large_pipeline.py")
 
-	svcID, err := a.AddService(root, "py-large", "", "", nil)
+	svcID, err := a.AddService(root, "py-large", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestIntegration_Python_LinkedFiles_WithClosures(t *testing.T) {
 	root := t.TempDir()
 	copyLinkedPythonFixtures(t, root)
 
-	svcID, err := a.AddService(root, "py-linked", "", "", nil)
+	svcID, err := a.AddService(root, "py-linked", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

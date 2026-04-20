@@ -74,7 +74,7 @@ func listCmd() *cobra.Command {
 }
 
 func addCmd() *cobra.Command {
-	var svcID, name, description, mainEntitiesRaw string
+	var svcID, description, mainEntitiesRaw string
 	cmd := &cobra.Command{
 		Use:   "add <rootAbs>",
 		Short: "Register a new service",
@@ -88,7 +88,7 @@ func addCmd() *cobra.Command {
 					}
 				}
 			}
-			id, err := a.AddService(args[0], svcID, name, description, mainEntities)
+			id, err := a.AddService(args[0], svcID, description, mainEntities)
 			if err != nil {
 				return err
 			}
@@ -97,7 +97,6 @@ func addCmd() *cobra.Command {
 		}),
 	}
 	cmd.Flags().StringVar(&svcID, "id", "", "service ID (default: dir name)")
-	cmd.Flags().StringVar(&name, "name", "", "human-readable name")
 	cmd.Flags().StringVar(&description, "description", "", "short description")
 	cmd.Flags().StringVar(&mainEntitiesRaw, "entities", "", "comma-separated main domain entities")
 	return cmd

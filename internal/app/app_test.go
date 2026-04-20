@@ -28,7 +28,7 @@ func TestApp_AddService_CreatesDir(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 
-	svcID, err := a.AddService(root, "mysvc", "My Service", "", nil)
+	svcID, err := a.AddService(root, "mysvc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestApp_AddService_WritesConfig(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 
-	svcID, err := a.AddService(root, "svc2", "", "", nil)
+	svcID, err := a.AddService(root, "svc2", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestApp_AddService_SavesRegistry(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 
-	_, err := a.AddService(root, "svc3", "", "", nil)
+	_, err := a.AddService(root, "svc3", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,10 +84,10 @@ func TestApp_AddService_DuplicateID_Errors(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 
-	if _, err := a.AddService(root, "dup", "", "", nil); err != nil {
+	if _, err := a.AddService(root, "dup", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.AddService(root, "dup", "", "", nil); err == nil {
+	if _, err := a.AddService(root, "dup", "", nil); err == nil {
 		t.Error("expected error for duplicate service ID")
 	}
 }
@@ -95,7 +95,7 @@ func TestApp_AddService_DuplicateID_Errors(t *testing.T) {
 // A9: App_AddService_InvalidRoot_Errors
 func TestApp_AddService_InvalidRoot_Errors(t *testing.T) {
 	a := setupApp(t)
-	_, err := a.AddService("/nonexistent/path/xyz", "svc4", "", "", nil)
+	_, err := a.AddService("/nonexistent/path/xyz", "svc4", "", nil)
 	if err == nil {
 		t.Error("expected error for non-existent root")
 	}
@@ -106,7 +106,7 @@ func TestApp_GetServiceInfo_Found(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 
-	svcID, err := a.AddService(root, "info-svc", "InfoService", "", nil)
+	svcID, err := a.AddService(root, "info-svc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestApp_ListServicesSorted(t *testing.T) {
 
 	for _, id := range []string{"z-svc", "a-svc", "m-svc"} {
 		root := t.TempDir()
-		if _, err := a.AddService(root, id, "", "", nil); err != nil {
+		if _, err := a.AddService(root, id, "", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -159,7 +159,7 @@ func TestApp_ListServicesSorted(t *testing.T) {
 func TestApp_GetSymbolContext_IncludesCode(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
-	svcID, err := a.AddService(root, "codesvc", "", "", nil)
+	svcID, err := a.AddService(root, "codesvc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestApp_GetSymbolContext_IncludesCode(t *testing.T) {
 func TestApp_GetSymbolFull_ReturnsAllFields(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
-	svcID, err := a.AddService(root, "fullsvc", "", "", nil)
+	svcID, err := a.AddService(root, "fullsvc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestApp_GetSymbolFull_ReturnsAllFields(t *testing.T) {
 func TestApp_GetSymbolFull_UnknownSymbol_Errors(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
-	svcID, _ := a.AddService(root, "fsvc2", "", "", nil)
+	svcID, _ := a.AddService(root, "fsvc2", "", nil)
 
 	_, err := a.GetSymbolFull(svcID, "s:py:Ghost:x.py:0", 1)
 	if err == nil {
@@ -259,7 +259,7 @@ func TestApp_PrepareSync_UnknownService_Errors(t *testing.T) {
 func TestApp_PrepareSync_Works(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
-	svcID, err := a.AddService(root, "sync-svc", "", "", nil)
+	svcID, err := a.AddService(root, "sync-svc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestApp_UpdateServiceMeta_PersistsFields(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 
-	svcID, err := a.AddService(root, "meta-svc", "Meta", "", nil)
+	svcID, err := a.AddService(root, "meta-svc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestApp_UpdateServiceMeta_EmptyValues_DoNotOverwrite(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 
-	svcID, err := a.AddService(root, "keep-svc", "", "original desc", []string{"entity1"})
+	svcID, err := a.AddService(root, "keep-svc", "original desc", []string{"entity1"})
 	if err != nil {
 		t.Fatal(err)
 	}

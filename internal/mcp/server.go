@@ -36,10 +36,15 @@ func Register(srv *server.MCPServer, a *app.App) {
 
 	srv.AddTool(
 		mcpgo.NewTool("service__list__get",
-			mcpgo.WithDescription("List all registered services with their metadata (id, name, description, mainEntities, rootAbs)"),
+			mcpgo.WithDescription("List all registered services: id → {name, rootAbs}"),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-			return jsonResult(a.Registry.ListFull())
+			full := a.Registry.ListFull()
+			out := make(map[string]string, len(full))
+			for id, e := range full {
+				out[id] = e.RootAbs
+			}
+			return jsonResult(out)
 		},
 	)
 
@@ -48,14 +53,12 @@ func Register(srv *server.MCPServer, a *app.App) {
 			mcpgo.WithDescription("Register a new service for indexing"),
 			mcpgo.WithString("rootAbs", mcpgo.Required(), mcpgo.Description("Absolute path to service root")),
 			mcpgo.WithString("serviceId", mcpgo.Description("Optional service ID (derived from dir name if omitted)")),
-			mcpgo.WithString("name", mcpgo.Description("Optional human-readable name")),
 			mcpgo.WithString("description", mcpgo.Description("Optional short description of the service")),
 			mcpgo.WithString("mainEntities", mcpgo.Description(`Optional JSON array of main domain entities, e.g. ["supplier","order"]`)),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			rootAbs := req.GetString("rootAbs", "")
 			svcID := req.GetString("serviceId", "")
-			name := req.GetString("name", "")
 			description := req.GetString("description", "")
 			var mainEntities []string
 			if me := req.GetString("mainEntities", ""); me != "" {
@@ -63,7 +66,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 					return errResult(fmt.Errorf("invalid mainEntities: %w", err)), nil
 				}
 			}
-			id, err := a.AddService(rootAbs, svcID, name, description, mainEntities)
+			id, err := a.AddService(rootAbs, svcID, description, mainEntities)
 			if err != nil {
 				return errResult(err), nil
 			}
@@ -140,13 +143,28 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("project__overview__get",
-			mcpgo.WithDescription("Summary counts: files, modules, symbols, edges"),
+		mcpgo.NewTool("debug__project__stats__get",
+			mcpgo.WithDescription("Index stats: total counts of indexed files, modules, symbols, and edges"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			id := req.GetString("serviceId", "")
 			res, err := a.GetProjectOverview(id)
+			if err != nil {
+				return errResult(err), nil
+			}
+			return jsonResult(res)
+		},
+	)
+
+	srv.AddTool(
+		mcpgo.NewTool("debug__project__config__get",
+			mcpgo.WithDescription("Service indexing config: pathPrefix, includeExt, ignoreFile, search.stopWords"),
+			mcpgo.WithString("serviceId", mcpgo.Required()),
+		),
+		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
+			id := req.GetString("serviceId", "")
+			res, err := a.GetServiceConfig(id)
 			if err != nil {
 				return errResult(err), nil
 			}
@@ -278,15 +296,15 @@ func helpPayload() map[string]interface{} {
 			{
 				Name:        "service__add",
 				Description: "Register a new service (codebase root) for indexing.",
-				Params:      []string{"rootAbs (required)", "serviceId?", "name?", "description?", "mainEntities? (JSON array)"},
+				Params:      []string{"rootAbs (required)", "serviceId?", "description?", "mainEntities? (JSON array)"},
 			},
 			{
 				Name:        "service__list__get",
-				Description: "List all registered services with full metadata: id, name, description, mainEntities, rootAbs.",
+				Description: "List all registered services: id → {rootAbs}. Lightweight overview — use service__info__get for description, mainEntities.",
 			},
 			{
 				Name:        "service__info__get",
-				Description: "Detailed info about one service: entry + config.",
+				Description: "Full info about one service: serviceId, rootAbs, description, mainEntities.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{
@@ -305,8 +323,13 @@ func helpPayload() map[string]interface{} {
 				Params:      []string{"serviceId (required)"},
 			},
 			{
-				Name:        "project__overview__get",
-				Description: "Summary counts: total files, modules, symbols, edges.",
+				Name:        "debug__project__stats__get",
+				Description: "Index stats: total counts of indexed files, modules, symbols, and edges.",
+				Params:      []string{"serviceId (required)"},
+			},
+			{
+				Name:        "debug__project__config__get",
+				Description: "Service indexing config: pathPrefix, includeExt, ignoreFile, search.stopWords.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{

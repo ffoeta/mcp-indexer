@@ -21,7 +21,7 @@ func TestRegistry_SaveAndReload_RoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "registry.json")
 	r, _ := LoadRegistry(path)
 
-	entry := ServiceEntry{RootAbs: "/some/root", Name: "test"}
+	entry := ServiceEntry{RootAbs: "/some/root", Description: "test"}
 	if err := r.Add("svc1", entry); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +37,7 @@ func TestRegistry_SaveAndReload_RoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("svc1 not found after reload")
 	}
-	if got.RootAbs != entry.RootAbs || got.Name != entry.Name {
+	if got.RootAbs != entry.RootAbs || got.Description != entry.Description {
 		t.Errorf("got %+v, want %+v", got, entry)
 	}
 }

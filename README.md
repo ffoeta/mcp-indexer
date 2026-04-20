@@ -90,11 +90,11 @@ go run ./cmd list
 ### Зарегистрировать проект
 
 ```bash
-go run ./cmd add <rootAbs> [--id <serviceId>] [--name <название>] [--description <описание>] [--entities <e1,e2>]
+go run ./cmd add <rootAbs> [--id <serviceId>] [--description <описание>] [--entities <e1,e2>]
 
 # Примеры:
 go run ./cmd add /home/user/myapp
-go run ./cmd add /home/user/myapp --id myapp --name "My App"
+go run ./cmd add /home/user/myapp --id myapp
 go run ./cmd add /home/user/myapp --id myapp --description "Job search backend" --entities "vacancy,employer,resume"
 ```
 
@@ -213,18 +213,20 @@ $APP_HOME/
 | Инструмент | Обязательные параметры | Описание |
 |---|---|---|
 | `help` | — | Описание сервера и всех инструментов |
-| `service__list__get` | — | Список сервисов с метаданными (id, name, description, mainEntities) |
-| `service__add` | `rootAbs` | Зарегистрировать новый сервис; принимает `description`, `mainEntities` (JSON array) |
-| `service__info__get` | `serviceId` | Детали и конфиг сервиса |
+| `service__list__get` | — | Краткий список сервисов: id → {name, rootAbs} |
+| `service__add` | `rootAbs` | Зарегистрировать новый сервис; принимает `serviceId?`, `description?`, `mainEntities?` (JSON array) |
+| `service__info__get` | `serviceId` | Полные данные сервиса: name, rootAbs, description, mainEntities, config |
 | `service__meta__update` | `serviceId` | Обновить `description` и/или `mainEntities` существующего сервиса |
 | `sync__prepare` | `serviceId` | Предпросмотр изменений (без записи) |
 | `sync__do` | `serviceId` | Хэш-дифф + применить к индексу |
-| `project__overview__get` | `serviceId` | Счётчики файлов/модулей/символов/рёбер |
+| `debug__project__stats__get` | `serviceId` | Статистика индекса: кол-во файлов, модулей, символов, рёбер |
 | `search` | `serviceId`, `query` | Поиск с опциональным JSON `limits` |
 | `file__context__get` | `serviceId`, `path` | Модуль, импорты и символы файла |
 | `symbol__context__get` | `serviceId`, `symbolId` | Детали символа + исходный код |
 | `symbol__full__get` | `serviceId`, `symbolId` | Символ + код + вызывающие + рёбра графа |
 | `graph__neighbors__get` | `serviceId`, `nodeId` | BFS в графе зависимостей |
+| `debug__project__config__get` | `serviceId` | Конфиг индексирования: pathPrefix, includeExt, ignoreFile, stopWords |
+| `debug__project__stats__get` | `serviceId` | Статистика индекса: кол-во файлов, модулей, символов, рёбер |
 | `debug__config__get` | — | [Debug] Путь к конфигу; не нужен в обычной работе |
 
 ---

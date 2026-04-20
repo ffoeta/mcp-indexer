@@ -48,7 +48,7 @@ func NewFromRegistry(reg *services.Registry) *App {
 
 // ---- service management ----
 
-func (a *App) AddService(rootAbs, svcID, name, description string, mainEntities []string) (string, error) {
+func (a *App) AddService(rootAbs, svcID, description string, mainEntities []string) (string, error) {
 	abs, err := filepath.Abs(rootAbs)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
@@ -61,7 +61,7 @@ func (a *App) AddService(rootAbs, svcID, name, description string, mainEntities 
 	}
 	svcID = sanitizeID(svcID)
 
-	entry := services.ServiceEntry{RootAbs: abs, Name: name, Description: description, MainEntities: mainEntities}
+	entry := services.ServiceEntry{RootAbs: abs, Description: description, MainEntities: mainEntities}
 	if err := a.Registry.Add(svcID, entry); err != nil {
 		return "", err
 	}
@@ -101,13 +101,23 @@ func (a *App) GetServiceInfo(svcID string) (interface{}, error) {
 	if !ok {
 		return nil, fmt.Errorf("service %q not found", svcID)
 	}
-	cfg, _ := services.LoadConfig(services.ConfigPath(svcID))
 	return map[string]interface{}{
-		"serviceId": svcID,
-		"rootAbs":   entry.RootAbs,
-		"name":      entry.Name,
-		"config":    cfg,
+		"serviceId":    svcID,
+		"rootAbs":      entry.RootAbs,
+		"description":  entry.Description,
+		"mainEntities": entry.MainEntities,
 	}, nil
+}
+
+func (a *App) GetServiceConfig(svcID string) (interface{}, error) {
+	if _, ok := a.Registry.Get(svcID); !ok {
+		return nil, fmt.Errorf("service %q not found", svcID)
+	}
+	cfg, err := services.LoadConfig(services.ConfigPath(svcID))
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+	return cfg, nil
 }
 
 // ---- sync ----

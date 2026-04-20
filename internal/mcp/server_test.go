@@ -274,8 +274,8 @@ func TestServiceMetaUpdate_InvalidMainEntities_ReturnsError(t *testing.T) {
 	}
 }
 
-// N11: ServiceListGet_ReturnsFullEntries
-func TestServiceListGet_ReturnsFullEntries(t *testing.T) {
+// N11: ServiceListGet_ReturnsIdToRootAbs
+func TestServiceListGet_ReturnsIdToRootAbs(t *testing.T) {
 	srv := server.NewMCPServer("test", "0.0.1")
 	a := makeTestApp(t)
 	Register(srv, a)
@@ -284,10 +284,47 @@ func TestServiceListGet_ReturnsFullEntries(t *testing.T) {
 	callTool(t, srv, "service__add", map[string]interface{}{
 		"rootAbs":     root,
 		"serviceId":   "list-test",
-		"description": "list test service",
+		"description": "should not appear in list",
 	})
 
 	result := callTool(t, srv, "service__list__get", nil)
+	if result.IsError {
+		t.Fatalf("unexpected error: %v", result.Content)
+	}
+	text, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		t.Fatal("expected TextContent")
+	}
+	var m map[string]string
+	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	rootAbs, ok := m["list-test"]
+	if !ok {
+		t.Fatal("list-test not in service list")
+	}
+	if rootAbs == "" {
+		t.Error("rootAbs must not be empty")
+	}
+}
+
+// N12: ServiceInfoGet_ReturnsFullMeta
+func TestServiceInfoGet_ReturnsFullMeta(t *testing.T) {
+	srv := server.NewMCPServer("test", "0.0.1")
+	a := makeTestApp(t)
+	Register(srv, a)
+	root := t.TempDir()
+
+	callTool(t, srv, "service__add", map[string]interface{}{
+		"rootAbs":      root,
+		"serviceId":    "info-full",
+		"description":  "full info test",
+		"mainEntities": `["entity1","entity2"]`,
+	})
+
+	result := callTool(t, srv, "service__info__get", map[string]interface{}{
+		"serviceId": "info-full",
+	})
 	if result.IsError {
 		t.Fatalf("unexpected error: %v", result.Content)
 	}
@@ -299,12 +336,15 @@ func TestServiceListGet_ReturnsFullEntries(t *testing.T) {
 	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
-	entry, ok := m["list-test"].(map[string]interface{})
-	if !ok {
-		t.Fatal("list-test not in service list")
+	if m["description"] != "full info test" {
+		t.Errorf("description not returned by service__info__get: %v", m["description"])
 	}
-	if entry["description"] != "list test service" {
-		t.Errorf("description not returned in list: %v", entry)
+	entities, ok := m["mainEntities"].([]interface{})
+	if !ok || len(entities) != 2 {
+		t.Errorf("mainEntities not returned correctly: %v", m["mainEntities"])
+	}
+	if _, hasConfig := m["config"]; hasConfig {
+		t.Error("config must not be present in service__info__get — use debug__project__config__get")
 	}
 }
 
@@ -314,7 +354,7 @@ func makeTestAppWithService(t *testing.T) (*app.App, string) {
 	a := makeTestApp(t)
 	root := t.TempDir()
 	os.WriteFile(root+"/foo.py", []byte("class Foo:\n    pass\n"), 0o644)
-	svcID, err := a.AddService(root, "tsvc", "", "", nil)
+	svcID, err := a.AddService(root, "tsvc", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
