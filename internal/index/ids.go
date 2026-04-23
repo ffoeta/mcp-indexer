@@ -9,11 +9,6 @@ import (
 // FileID возвращает fileId = "f:" + key.
 func FileID(key string) string { return "f:" + key }
 
-// ModuleID возвращает moduleId для заданного языка и имени модуля.
-func ModuleID(lang, moduleName string) string {
-	return fmt.Sprintf("m:%s:%s", lang, moduleName)
-}
-
 // SymbolID возвращает symbolId.
 // qualified может совпадать с name если квалифицированное имя неизвестно.
 func SymbolID(lang, qualified, key string, startLine int) string {

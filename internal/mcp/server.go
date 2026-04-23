@@ -24,7 +24,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("debug__config__get",
+		mcpgo.NewTool("debug_get_config",
 			mcpgo.WithDescription("[Debug] General info about the mcp-indexer instance (config path, home dir). Not needed in normal workflows."),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -35,7 +35,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("service__list__get",
+		mcpgo.NewTool("get_service_list",
 			mcpgo.WithDescription("List all registered services: id → {name, rootAbs}"),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
@@ -49,7 +49,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("service__add",
+		mcpgo.NewTool("add_service",
 			mcpgo.WithDescription("Register a new service for indexing"),
 			mcpgo.WithString("rootAbs", mcpgo.Required(), mcpgo.Description("Absolute path to service root")),
 			mcpgo.WithString("serviceId", mcpgo.Description("Optional service ID (derived from dir name if omitted)")),
@@ -75,7 +75,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("service__info__get",
+		mcpgo.NewTool("get_service_meta",
 			mcpgo.WithDescription("Get info about a registered service"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -90,7 +90,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("service__meta__update",
+		mcpgo.NewTool("update_service_meta",
 			mcpgo.WithDescription("Update description and/or mainEntities of a registered service"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("description", mcpgo.Description("New description (omit to keep existing)")),
@@ -113,7 +113,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("sync__prepare",
+		mcpgo.NewTool("prepare_sync",
 			mcpgo.WithDescription("Stat-only diff: what would change (no writes)"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -128,7 +128,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("sync__do",
+		mcpgo.NewTool("sync",
 			mcpgo.WithDescription("Hash diff + apply to index"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -143,7 +143,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("debug__project__stats__get",
+		mcpgo.NewTool("debug_get_project_stats",
 			mcpgo.WithDescription("Index stats: total counts of indexed files, modules, symbols, and edges"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -158,7 +158,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("debug__project__config__get",
+		mcpgo.NewTool("debug_get_project_config",
 			mcpgo.WithDescription("Service indexing config: pathPrefix, includeExt, ignoreFile, search.stopWords"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
@@ -177,7 +177,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 			mcpgo.WithDescription("Search symbols/files/modules by query"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("query", mcpgo.Required()),
-			mcpgo.WithString("limits", mcpgo.Description(`JSON: {"sym":20,"file":10,"mod":5}. Set 0 to skip a type.`)),
+			mcpgo.WithString("limits", mcpgo.Description(`JSON: {"sym":20,"file":10}. Set 0 to skip a type.`)),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			id := req.GetString("serviceId", "")
@@ -197,7 +197,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("file__context__get",
+		mcpgo.NewTool("get_file_context",
 			mcpgo.WithDescription("File info: module, imports, symbols"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("path", mcpgo.Required(), mcpgo.Description("File key (pathPrefix+relPath)")),
@@ -214,7 +214,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("symbol__context__get",
+		mcpgo.NewTool("get_symbol_context",
 			mcpgo.WithDescription("Symbol info by symbolId"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("symbolId", mcpgo.Required()),
@@ -231,7 +231,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("symbol__full__get",
+		mcpgo.NewTool("get_symbol_full",
 			mcpgo.WithDescription("Symbol metadata + source code + callers + graph edges in one call"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("symbolId", mcpgo.Required()),
@@ -250,7 +250,7 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("graph__neighbors__get",
+		mcpgo.NewTool("get_neighbors",
 			mcpgo.WithDescription("BFS neighbors in the dependency graph"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 			mcpgo.WithString("nodeId", mcpgo.Required()),
@@ -285,86 +285,86 @@ func helpPayload() map[string]interface{} {
 		"server":      "mcp-indexer",
 		"description": "MCP server for source code indexing. Scans Python and Java codebases, builds a SQLite index of files, modules, symbols, and dependency edges. Designed for LLM agents that need to navigate and understand large codebases.",
 		"workflow": []string{
-			"1. service__add       — register a codebase root (once)",
-			"2. sync__do           — index or re-index the codebase",
-			"3. service__list__get — see all registered services",
+			"1. add_service       — register a codebase root (once)",
+			"2. sync           — index or re-index the codebase",
+			"3. get_service_list — see all registered services",
 			"4. search             — find symbols/files/modules by keyword",
-			"5. file__context__get / symbol__context__get / symbol__full__get — drill down",
-			"6. graph__neighbors__get — traverse the dependency graph",
+			"5. get_file_context / get_symbol_context / get_symbol_full — drill down",
+			"6. get_neighbors — traverse the dependency graph",
 		},
 		"tools": []toolDoc{
 			{
-				Name:        "service__add",
+				Name:        "add_service",
 				Description: "Register a new service (codebase root) for indexing.",
 				Params:      []string{"rootAbs (required)", "serviceId?", "description?", "mainEntities? (JSON array)"},
 			},
 			{
-				Name:        "service__list__get",
-				Description: "List all registered services: id → {rootAbs}. Lightweight overview — use service__info__get for description, mainEntities.",
+				Name:        "get_service_list",
+				Description: "List all registered services: id → {rootAbs}. Lightweight overview — use get_service_meta for description, mainEntities.",
 			},
 			{
-				Name:        "service__info__get",
+				Name:        "get_service_meta",
 				Description: "Full info about one service: serviceId, rootAbs, description, mainEntities.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{
-				Name:        "service__meta__update",
+				Name:        "update_service_meta",
 				Description: "Update description and/or mainEntities of an existing service. Call this after exploring or syncing a service to document what it does. Non-empty values overwrite; omitted values are kept.",
 				Params:      []string{"serviceId (required)", "description?", "mainEntities? (JSON array)"},
 			},
 			{
-				Name:        "sync__prepare",
+				Name:        "prepare_sync",
 				Description: "Stat-only dry run: shows which files would be added/modified/deleted without writing anything.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{
-				Name:        "sync__do",
-				Description: "Hash diff + apply changes to the SQLite index. Run after service__add or when files change.",
+				Name:        "sync",
+				Description: "Hash diff + apply changes to the SQLite index. Run after add_service or when files change.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{
-				Name:        "debug__project__stats__get",
+				Name:        "debug_get_project_stats",
 				Description: "Index stats: total counts of indexed files, modules, symbols, and edges.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{
-				Name:        "debug__project__config__get",
+				Name:        "debug_get_project_config",
 				Description: "Service indexing config: pathPrefix, includeExt, ignoreFile, search.stopWords.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{
 				Name:        "search",
 				Description: "Full-text search across symbols, files, and modules by keyword(s).",
-				Params:      []string{"serviceId (required)", "query (required)", `limits? (JSON: {"sym":20,"file":10,"mod":5})`},
+				Params:      []string{"serviceId (required)", "query (required)", `limits? (JSON: {"sym":20,"file":10})`},
 			},
 			{
-				Name:        "file__context__get",
+				Name:        "get_file_context",
 				Description: "File details: owning module, all imports, all defined symbols.",
 				Params:      []string{"serviceId (required)", "path (required) — file key, e.g. src:pkg/collector.py"},
 			},
 			{
-				Name:        "symbol__context__get",
+				Name:        "get_symbol_context",
 				Description: "Symbol metadata + source code snippet.",
 				Params:      []string{"serviceId (required)", "symbolId (required)"},
 			},
 			{
-				Name:        "symbol__full__get",
+				Name:        "get_symbol_full",
 				Description: "Symbol metadata + source code + callers + graph edges in one call.",
 				Params:      []string{"serviceId (required)", "symbolId (required)", "edgeDepth? (default 1)"},
 			},
 			{
-				Name:        "graph__neighbors__get",
+				Name:        "get_neighbors",
 				Description: "BFS traversal of the dependency graph from any node (file, module, symbol).",
 				Params:      []string{"serviceId (required)", "nodeId (required)", "depth? (default 2)", "edgeTypes? (CSV: contains,imports,defines,calls,base)"},
 			},
 			{
-				Name:        "debug__config__get",
+				Name:        "debug_get_config",
 				Description: "[Debug only] Returns config home path. Not needed in normal agent workflows.",
 			},
 		},
 		"notes": []string{
-			"After syncing or exploring a service, consider calling service__meta__update to document its purpose and key domain entities — this helps future sessions get up to speed faster.",
-			"Symbol IDs have the format s:{lang}:{qualified}:{fileKey}:{startLine}. Obtain them via search or file__context__get.",
+			"After syncing or exploring a service, consider calling update_service_meta to document its purpose and key domain entities — this helps future sessions get up to speed faster.",
+			"Symbol IDs have the format s:{lang}:{qualified}:{fileKey}:{startLine}. Obtain them via search or get_file_context.",
 			"File keys have the format {pathPrefix}{relPath}, e.g. src:pkg/collector.py. pathPrefix is configured per service.",
 		},
 	}

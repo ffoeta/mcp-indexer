@@ -213,21 +213,20 @@ $APP_HOME/
 | Инструмент | Обязательные параметры | Описание |
 |---|---|---|
 | `help` | — | Описание сервера и всех инструментов |
-| `service__list__get` | — | Краткий список сервисов: id → {name, rootAbs} |
-| `service__add` | `rootAbs` | Зарегистрировать новый сервис; принимает `serviceId?`, `description?`, `mainEntities?` (JSON array) |
-| `service__info__get` | `serviceId` | Полные данные сервиса: name, rootAbs, description, mainEntities, config |
-| `service__meta__update` | `serviceId` | Обновить `description` и/или `mainEntities` существующего сервиса |
-| `sync__prepare` | `serviceId` | Предпросмотр изменений (без записи) |
-| `sync__do` | `serviceId` | Хэш-дифф + применить к индексу |
-| `debug__project__stats__get` | `serviceId` | Статистика индекса: кол-во файлов, модулей, символов, рёбер |
+| `get_service_list` | — | Краткий список сервисов: id → {name, rootAbs} |
+| `get_service_meta` | `serviceId` | Полные данные сервиса: name, rootAbs, description, mainEntities, config |
+| `update_service_meta` | `serviceId` | Обновить `description` и/или `mainEntities` существующего сервиса |
+| `add_service` | `rootAbs` | Зарегистрировать новый сервис; принимает `serviceId?`, `description?`, `mainEntities?` (JSON array) |
+| `prepare_sync` | `serviceId` | Предпросмотр изменений (без записи) |
+| `sync` | `serviceId` | Хэш-дифф + применить к индексу |
 | `search` | `serviceId`, `query` | Поиск с опциональным JSON `limits` |
-| `file__context__get` | `serviceId`, `path` | Модуль, импорты и символы файла |
-| `symbol__context__get` | `serviceId`, `symbolId` | Детали символа + исходный код |
-| `symbol__full__get` | `serviceId`, `symbolId` | Символ + код + вызывающие + рёбра графа |
-| `graph__neighbors__get` | `serviceId`, `nodeId` | BFS в графе зависимостей |
-| `debug__project__config__get` | `serviceId` | Конфиг индексирования: pathPrefix, includeExt, ignoreFile, stopWords |
-| `debug__project__stats__get` | `serviceId` | Статистика индекса: кол-во файлов, модулей, символов, рёбер |
-| `debug__config__get` | — | [Debug] Путь к конфигу; не нужен в обычной работе |
+| `get_file_context` | `serviceId`, `path` | Модуль, импорты и символы файла |
+| `get_symbol_context` | `serviceId`, `symbolId` | Детали символа + исходный код |
+| `get_symbol_full` | `serviceId`, `symbolId` | Символ + код + вызывающие + рёбра графа |
+| `get_neighbors` | `serviceId`, `nodeId` | BFS в графе зависимостей |
+| `debug_get_project_config` | `serviceId` | Конфиг индексирования: pathPrefix, includeExt, ignoreFile, stopWords |
+| `debug_get_project_stats` | `serviceId` | Статистика индекса: кол-во файлов, модулей, символов, рёбер |
+| `debug_get_config` | — | [Debug] Путь к конфигу; не нужен в обычной работе |
 
 ---
 

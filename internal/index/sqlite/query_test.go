@@ -224,7 +224,7 @@ func TestGetCallers_FindsBySymbolId(t *testing.T) {
 	insertEdge(t, tx, "calls", callerFileID, symID)
 	tx.Commit()
 
-	callers, err := GetCallers(s.DB(), symID, "")
+	callers, err := GetCallers(s.DB(), symID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,29 +239,6 @@ func TestGetCallers_FindsBySymbolId(t *testing.T) {
 	}
 }
 
-// M13: GetCallers_FindsByModuleId
-func TestGetCallers_FindsByModuleId(t *testing.T) {
-	s := openTestStore(t)
-	tx, _ := s.Begin()
-	callerFileID := insertFile(t, tx, "caller.py", "python")
-	insertFile(t, tx, "target.py", "python")
-	symID := "s:py:Foo:target.py:1"
-	moduleID := "m:py:target"
-	insertEdge(t, tx, "calls", callerFileID, moduleID)
-	tx.Commit()
-
-	callers, err := GetCallers(s.DB(), symID, moduleID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(callers) != 1 {
-		t.Fatalf("expected 1 caller via moduleId, got %d", len(callers))
-	}
-	if callers[0].Via != moduleID {
-		t.Errorf("expected Via=%q, got %q", moduleID, callers[0].Via)
-	}
-}
-
 // M14: GetCallers_Empty_NoCallers
 func TestGetCallers_Empty_NoCallers(t *testing.T) {
 	s := openTestStore(t)
@@ -271,35 +248,12 @@ func TestGetCallers_Empty_NoCallers(t *testing.T) {
 	insertSymbol(t, tx, symID, fileID, "class", "Foo")
 	tx.Commit()
 
-	callers, err := GetCallers(s.DB(), symID, "")
+	callers, err := GetCallers(s.DB(), symID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(callers) != 0 {
 		t.Errorf("expected 0 callers, got %d", len(callers))
-	}
-}
-
-// M15: GetCallers_DeduplicatesCallerFile
-func TestGetCallers_DeduplicatesCallerFile(t *testing.T) {
-	s := openTestStore(t)
-	tx, _ := s.Begin()
-	callerFileID := insertFile(t, tx, "caller.py", "python")
-	insertFile(t, tx, "target.py", "python")
-	symID := "s:py:Foo:target.py:1"
-	moduleID := "m:py:target"
-	// Один файл → и symbolId, и moduleId
-	insertEdge(t, tx, "calls", callerFileID, symID)
-	insertEdge(t, tx, "calls", callerFileID, moduleID)
-	tx.Commit()
-
-	callers, err := GetCallers(s.DB(), symID, moduleID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// caller.py встречается дважды (разные via), но file-level дедуп → 1
-	if len(callers) != 1 {
-		t.Errorf("expected 1 deduplicated caller, got %d: %v", len(callers), callers)
 	}
 }
 

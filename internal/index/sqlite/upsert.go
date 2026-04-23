@@ -10,22 +10,13 @@ import (
 
 const batchInsert = 200 // строк на один multi-row INSERT
 
-func UpsertModule(tx *sql.Tx, row index.ModuleRow) error {
-	_, err := tx.Exec(
-		`INSERT INTO modules(module_id, module_name) VALUES(?,?)
-		 ON CONFLICT(module_id) DO UPDATE SET module_name=excluded.module_name`,
-		row.ModuleID, row.ModuleName,
-	)
-	return wrap(err, "upsert module "+row.ModuleID)
-}
-
 func UpsertFile(tx *sql.Tx, row index.FileRow) error {
 	_, err := tx.Exec(
-		`INSERT INTO files(file_id, key, rel_path, lang, hash, module_id) VALUES(?,?,?,?,?,?)
+		`INSERT INTO files(file_id, key, rel_path, lang, hash) VALUES(?,?,?,?,?)
 		 ON CONFLICT(file_id) DO UPDATE SET
 		   key=excluded.key, rel_path=excluded.rel_path, lang=excluded.lang,
-		   hash=excluded.hash, module_id=excluded.module_id`,
-		row.FileID, row.Key, row.RelPath, row.Lang, row.Hash, nullStr(row.ModuleID),
+		   hash=excluded.hash`,
+		row.FileID, row.Key, row.RelPath, row.Lang, row.Hash,
 	)
 	return wrap(err, "upsert file "+row.Key)
 }
@@ -88,13 +79,6 @@ func InsertTermPostings(tx *sql.Tx, rows []index.TermPosting) error {
 		}
 	}
 	return nil
-}
-
-func nullStr(s string) interface{} {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func wrap(err error, msg string) error {

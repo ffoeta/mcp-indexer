@@ -1,19 +1,12 @@
 package index
 
-// ModuleRow соответствует таблице modules.
-type ModuleRow struct {
-	ModuleID   string
-	ModuleName string
-}
-
 // FileRow соответствует таблице files.
 type FileRow struct {
-	FileID   string
-	Key      string
-	RelPath  string
-	Lang     string
-	Hash     string
-	ModuleID string // может быть пустым
+	FileID  string
+	Key     string
+	RelPath string
+	Lang    string
+	Hash    string
 }
 
 // ImportRow соответствует таблице imports.

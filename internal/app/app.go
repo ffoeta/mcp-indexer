@@ -184,13 +184,6 @@ func (a *App) Search(svcID, query string, limits SearchLimits) (*SearchResponse,
 		case strings.HasPrefix(docID, "f:") && limits.File > 0 && len(resp.File) < limits.File:
 			key := strings.TrimPrefix(docID, "f:")
 			resp.File = append(resp.File, []interface{}{key})
-		case strings.HasPrefix(docID, "m:") && limits.Mod > 0 && len(resp.Mod) < limits.Mod:
-			var modName string
-			if err := store.DB().QueryRow(
-				`SELECT module_name FROM modules WHERE module_id=?`, docID,
-			).Scan(&modName); err == nil {
-				resp.Mod = append(resp.Mod, []interface{}{docID, modName})
-			}
 		}
 	}
 	return resp, nil
@@ -267,13 +260,7 @@ func (a *App) GetSymbolFull(svcID, symbolID string, edgeDepth int) (*SymbolFullR
 		return nil, fmt.Errorf("symbol %q not found", symbolID)
 	}
 
-	// moduleId файла символа (для callers по модулю)
-	var moduleID string
-	_ = store.DB().QueryRow(
-		`SELECT COALESCE(module_id, '') FROM files WHERE key = ?`, row.FileKey,
-	).Scan(&moduleID)
-
-	callers, err := sqliteq.GetCallers(store.DB(), symbolID, moduleID)
+	callers, err := sqliteq.GetCallers(store.DB(), symbolID)
 	if err != nil {
 		return nil, err
 	}
@@ -334,6 +321,14 @@ func (a *App) GetNeighbors(svcID, nodeID string, depth int, edgeTypes []string) 
 		return nil, err
 	}
 	return sqliteq.GetNeighbors(store.DB(), nodeID, depth, edgeTypes)
+}
+
+func (a *App) GetAllEdges(svcID string) ([]sqliteq.NeighborEdge, error) {
+	store, err := a.getStore(svcID)
+	if err != nil {
+		return nil, err
+	}
+	return sqliteq.GetAllEdges(store.DB())
 }
 
 func (a *App) ListServicesSorted() []string {

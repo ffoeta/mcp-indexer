@@ -9,6 +9,7 @@ import (
 	"mcp-indexer/internal/services"
 	"mcp-indexer/internal/tokenize"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -109,16 +110,19 @@ func DoSync(
 	}
 
 	// Индексируем added
+	var changedFileIDs []string
 	for _, f := range diff.Added {
 		hash, syncErr := indexEntry(tx, f, parsers, norm)
 		if syncErr != nil {
 			result.Errors = append(result.Errors, *syncErr)
 			if hash != "" {
 				nowHash[f.Key] = hash
+				changedFileIDs = append(changedFileIDs, index.FileID(f.Key))
 			}
 			continue
 		}
 		nowHash[f.Key] = hash
+		changedFileIDs = append(changedFileIDs, index.FileID(f.Key))
 		result.Added++
 	}
 
@@ -135,11 +139,34 @@ func DoSync(
 			result.Errors = append(result.Errors, *syncErr)
 			if hash != "" {
 				nowHash[f.Key] = hash
+				changedFileIDs = append(changedFileIDs, index.FileID(f.Key))
 			}
 			continue
 		}
 		nowHash[f.Key] = hash
+		changedFileIDs = append(changedFileIDs, index.FileID(f.Key))
 		result.Modified++
+	}
+
+	// Резолюция import edges: file→file для внутренних зависимостей
+	if err := resolveImportEdges(tx, changedFileIDs); err != nil {
+		result.Errors = append(result.Errors, SyncError{
+			Stage: "index", Code: "RESOLVE_IMPORTS", Message: err.Error(),
+		})
+	}
+
+	// Резолюция base edges: x:ClassName → реальный symbolId (если уникальное совпадение)
+	if err := resolveBaseEdges(tx); err != nil {
+		result.Errors = append(result.Errors, SyncError{
+			Stage: "index", Code: "RESOLVE_BASES", Message: err.Error(),
+		})
+	}
+
+	// Резолюция calls edges: x:FQN → fileId Java-класса (если уникальное совпадение по простому имени)
+	if err := resolveCallEdges(tx); err != nil {
+		result.Errors = append(result.Errors, SyncError{
+			Stage: "index", Code: "RESOLVE_CALLS", Message: err.Error(),
+		})
 	}
 
 	// Фаза 1: commit DB
@@ -189,38 +216,16 @@ func indexEntry(
 	lang := langFromExt(filepath.Ext(f.AbsPath))
 	fileID := index.FileID(f.Key)
 
-	moduleID := ""
-	moduleName := ""
-	if lang == "python" {
-		moduleName = index.PythonModuleName(f.RelPath)
-		moduleID = index.ModuleID("py", moduleName)
-		if err := sqlite.UpsertModule(tx, index.ModuleRow{ModuleID: moduleID, ModuleName: moduleName}); err != nil {
-			return hash, &SyncError{Key: f.Key, Stage: "index", Code: "UPSERT_MODULE", Message: err.Error()}
-		}
-	}
-
 	if err := sqlite.UpsertFile(tx, index.FileRow{
 		FileID: fileID, Key: f.Key, RelPath: f.RelPath,
-		Lang: lang, Hash: hash, ModuleID: moduleID,
+		Lang: lang, Hash: hash,
 	}); err != nil {
 		return hash, &SyncError{Key: f.Key, Stage: "index", Code: "UPSERT_FILE", Message: err.Error()}
-	}
-
-	if moduleID != "" {
-		_ = sqlite.InsertEdge(tx, index.EdgeRow{
-			Type: "contains", FromID: moduleID, ToID: fileID, Confidence: 100,
-		})
 	}
 
 	var postings []index.TermPosting
 	for _, t := range norm.Tokenize(f.RelPath) {
 		postings = append(postings, index.TermPosting{Term: t, DocID: fileID, Weight: weightPath})
-	}
-	if moduleName != "" {
-		modDocID := index.ModuleID("py", moduleName)
-		for _, t := range norm.Tokenize(moduleName) {
-			postings = append(postings, index.TermPosting{Term: t, DocID: modDocID, Weight: weightModule})
-		}
 	}
 
 	ext := filepath.Ext(f.AbsPath)
@@ -254,9 +259,6 @@ func indexEntry(
 	imports := make([]index.ImportRow, len(pr.Imports))
 	for i, imp := range pr.Imports {
 		imports[i] = index.ImportRow{FileID: fileID, Imp: imp}
-		_ = sqlite.InsertEdge(tx, index.EdgeRow{
-			Type: "imports", FromID: fileID, ToID: index.ModuleID(lang, imp), Confidence: 100,
-		})
 		for _, t := range norm.Tokenize(imp) {
 			postings = append(postings, index.TermPosting{Term: t, DocID: fileID, Weight: weightImport})
 		}
@@ -303,7 +305,7 @@ func indexEntry(
 		var toID string
 		switch {
 		case c.Module != "":
-			toID = index.ModuleID(lang, c.Module)
+			toID = index.UnresolvedID(c.Module)
 		case c.Local != "":
 			if symID, ok := localSymbols[c.Local]; ok {
 				toID = symID
@@ -325,6 +327,168 @@ func indexEntry(
 		return hash, &SyncError{Key: f.Key, Stage: "index", Code: "INSERT_POSTINGS", Message: err.Error()}
 	}
 	return hash, nil
+}
+
+// resolveImportEdges строит file→file edges типа "imports" для изменённых файлов.
+// Вызывается после того, как все новые/изменённые файлы уже записаны в транзакцию,
+// чтобы moduleMap включал и только что добавленные файлы.
+func resolveImportEdges(tx *sql.Tx, fileIDs []string) error {
+	if len(fileIDs) == 0 {
+		return nil
+	}
+	moduleMap, err := sqlite.BuildModuleFileMap(tx)
+	if err != nil {
+		return err
+	}
+	for _, fileID := range fileIDs {
+		rows, err := tx.Query(`SELECT imp FROM imports WHERE file_id = ?`, fileID)
+		if err != nil {
+			return fmt.Errorf("query imports for %s: %w", fileID, err)
+		}
+		for rows.Next() {
+			var imp string
+			if err := rows.Scan(&imp); err != nil {
+				rows.Close()
+				return err
+			}
+			if targetID, ok := moduleMap[imp]; ok && targetID != fileID {
+				_ = sqlite.InsertEdge(tx, index.EdgeRow{
+					Type: "imports", FromID: fileID, ToID: targetID, Confidence: 100,
+				})
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveBaseEdges заменяет x:ClassName → реальный symbolId в base edges.
+// Резолюция выполняется только если имя однозначно (ровно один класс с таким именем).
+func resolveBaseEdges(tx *sql.Tx) error {
+	// Строим карту name → []symbolId для всех class-символов
+	rows, err := tx.Query(`SELECT symbol_id, name FROM symbols WHERE kind = 'class'`)
+	if err != nil {
+		return fmt.Errorf("query class symbols: %w", err)
+	}
+	nameToSyms := map[string][]string{}
+	for rows.Next() {
+		var symID, name string
+		if err := rows.Scan(&symID, &name); err != nil {
+			rows.Close()
+			return err
+		}
+		nameToSyms[name] = append(nameToSyms[name], symID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Находим все неразрешённые base edges
+	edgeRows, err := tx.Query(`SELECT from_id, to_id, aux FROM edges WHERE type = 'base' AND to_id LIKE 'x:%'`)
+	if err != nil {
+		return fmt.Errorf("query unresolved base edges: %w", err)
+	}
+	type unresEdge struct{ fromID, toID, aux string }
+	var unresolved []unresEdge
+	for edgeRows.Next() {
+		var e unresEdge
+		if err := edgeRows.Scan(&e.fromID, &e.toID, &e.aux); err != nil {
+			edgeRows.Close()
+			return err
+		}
+		unresolved = append(unresolved, e)
+	}
+	edgeRows.Close()
+	if err := edgeRows.Err(); err != nil {
+		return err
+	}
+
+	for _, e := range unresolved {
+		syms := nameToSyms[e.aux]
+		if len(syms) != 1 {
+			continue // неоднозначно или не найдено — оставляем unresolved
+		}
+		if _, err := tx.Exec(
+			`UPDATE edges SET to_id = ? WHERE type = 'base' AND from_id = ? AND to_id = ?`,
+			syms[0], e.fromID, e.toID,
+		); err != nil {
+			return fmt.Errorf("resolve base edge %s→%s: %w", e.fromID, e.toID, err)
+		}
+	}
+	return nil
+}
+
+// resolveCallEdges заменяет x:FQN → fileId для Java-классов, присутствующих в индексе.
+// Резолюция по простому имени класса (последний компонент FQN). Пропускает неоднозначные совпадения.
+func resolveCallEdges(tx *sql.Tx) error {
+	// Строим карту: простое имя класса → fileId для Java-файлов.
+	// Ключ — имя файла без расширения (последний компонент relPath).
+	rows, err := tx.Query(`SELECT file_id, rel_path FROM files WHERE lang = 'java'`)
+	if err != nil {
+		return fmt.Errorf("query java files: %w", err)
+	}
+	simpleToFile := map[string][]string{} // simpleName → []fileId
+	for rows.Next() {
+		var fileID, relPath string
+		if err := rows.Scan(&fileID, &relPath); err != nil {
+			rows.Close()
+			return err
+		}
+		// relPath: "src/main/java/ru/hh/.../ClassName.java" → "ClassName"
+		base := filepath.Base(relPath)
+		if ext := filepath.Ext(base); ext == ".java" {
+			simpleName := base[:len(base)-len(ext)]
+			simpleToFile[simpleName] = append(simpleToFile[simpleName], fileID)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	// Находим все calls edges с unresolved target
+	edgeRows, err := tx.Query(`SELECT from_id, to_id FROM edges WHERE type = 'calls' AND to_id LIKE 'x:%'`)
+	if err != nil {
+		return fmt.Errorf("query unresolved calls: %w", err)
+	}
+	type callEdge struct{ fromID, toID string }
+	var unresolved []callEdge
+	for edgeRows.Next() {
+		var e callEdge
+		if err := edgeRows.Scan(&e.fromID, &e.toID); err != nil {
+			edgeRows.Close()
+			return err
+		}
+		unresolved = append(unresolved, e)
+	}
+	edgeRows.Close()
+	if err := edgeRows.Err(); err != nil {
+		return err
+	}
+
+	for _, e := range unresolved {
+		// Извлекаем FQN из "x:ru.hh...ClassName" → простое имя "ClassName"
+		fqn := e.toID[2:] // strip "x:"
+		simpleName := fqn
+		if idx := strings.LastIndex(fqn, "."); idx >= 0 {
+			simpleName = fqn[idx+1:]
+		}
+		files := simpleToFile[simpleName]
+		if len(files) != 1 {
+			continue // не найдено или неоднозначно
+		}
+		if _, err := tx.Exec(
+			`UPDATE edges SET to_id = ? WHERE type = 'calls' AND from_id = ? AND to_id = ?`,
+			files[0], e.fromID, e.toID,
+		); err != nil {
+			return fmt.Errorf("resolve call edge %s→%s: %w", e.fromID, e.toID, err)
+		}
+	}
+	return nil
 }
 
 func langFromExt(ext string) string {

@@ -41,15 +41,34 @@ func (e *javaExtractor) extract(root *sitter.Node, src []byte) *parse.ParseResul
 }
 
 func (e *javaExtractor) extractImport(node *sitter.Node, src []byte, result *parse.ParseResult, importMap map[string]string) {
+	isStatic := false
+	for i := 0; i < int(node.ChildCount()); i++ {
+		if node.Child(i).Type() == "static" {
+			isStatic = true
+			break
+		}
+	}
+
 	for i := 0; i < int(node.ChildCount()); i++ {
 		child := node.Child(i)
 		switch child.Type() {
 		case "scoped_identifier", "type_identifier":
 			name := nodeText(child, src)
+			isWildcard := strings.HasSuffix(name, ".*")
 			name = strings.TrimSuffix(name, ".*")
 			result.Imports = append(result.Imports, name)
 			parts := strings.Split(name, ".")
 			importMap[parts[len(parts)-1]] = name
+
+			// import static a.b.C.memberName — memberName может быть методом/полем,
+			// дополнительно регистрируем класс C → a.b.C чтобы ловить C.memberName() вызовы.
+			if isStatic && !isWildcard && len(parts) >= 2 {
+				className := strings.Join(parts[:len(parts)-1], ".")
+				classSimple := parts[len(parts)-2]
+				if _, exists := importMap[classSimple]; !exists {
+					importMap[classSimple] = className
+				}
+			}
 		}
 	}
 }
@@ -63,7 +82,13 @@ func (e *javaExtractor) extractClass(node *sitter.Node, src []byte, result *pars
 
 	var bases []string
 	if superNode := node.ChildByFieldName("superclass"); superNode != nil {
-		bases = append(bases, nodeText(superNode, src))
+		for i := 0; i < int(superNode.ChildCount()); i++ {
+			child := superNode.Child(i)
+			if child.Type() == "type_identifier" || child.Type() == "scoped_type_identifier" {
+				bases = append(bases, nodeText(child, src))
+				break
+			}
+		}
 	}
 
 	result.Symbols = append(result.Symbols, parse.SymbolDef{
@@ -175,9 +200,6 @@ func (e *javaExtractor) walkCalls(node *sitter.Node, src []byte, importMap map[s
 			typeName := nodeText(typeNode, src)
 			if fullName, ok := importMap[typeName]; ok {
 				e.addCall(fullName, int(node.StartPoint().Row)+1, result, seen)
-			} else {
-				// локальный тип или неизвестный
-				e.addCall(typeName, int(node.StartPoint().Row)+1, result, seen)
 			}
 		}
 	}

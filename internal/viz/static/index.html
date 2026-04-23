@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>mcp-indexer graph</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; overflow: hidden; }
+
+/* ---- sidebar ---- */
+#sidebar {
+  width: 270px; min-width: 220px; background: #161b22;
+  border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 10;
+}
+#sidebar h1 { font-size: 12px; padding: 10px 14px; border-bottom: 1px solid #30363d; color: #8b949e; letter-spacing: .05em; text-transform: uppercase; }
+
+/* source controls */
+#controls { padding: 10px 14px; border-bottom: 1px solid #30363d; }
+#mode-tabs { display: flex; gap: 5px; margin-bottom: 10px; }
+.tab { flex: 1; padding: 4px 0; font-size: 11px; border: 1px solid #30363d; background: #0d1117; color: #8b949e; border-radius: 4px; cursor: pointer; text-align: center; }
+.tab.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+#node-controls { display: none; flex-direction: column; gap: 7px; }
+#node-controls.visible { display: flex; }
+label.small { font-size: 11px; color: #8b949e; display: block; margin-bottom: 3px; }
+#node-input { width: 100%; padding: 4px 7px; font-size: 11px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-family: inherit; }
+#node-input:focus { outline: none; border-color: #1f6feb; }
+.depth-row { display: flex; align-items: center; gap: 7px; }
+#depth-val { font-size: 11px; color: #58a6ff; min-width: 14px; text-align: right; }
+#depth-slider { flex: 1; accent-color: #1f6feb; }
+#load-btn { width: 100%; padding: 5px; font-size: 11px; background: #238636; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-family: inherit; }
+#load-btn:hover { background: #2ea043; }
+#load-btn:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+
+/* ---- filters ---- */
+#filters { padding: 10px 14px; border-bottom: 1px solid #30363d; }
+#filters h2 { font-size: 11px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .05em; }
+.filter-group { margin-bottom: 8px; }
+.filter-group-title { font-size: 10px; color: #6e7681; margin-bottom: 5px; display: flex; align-items: center; justify-content: space-between; }
+.filter-group-title a { color: #58a6ff; cursor: pointer; font-size: 10px; text-decoration: none; }
+.filter-item { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; cursor: pointer; user-select: none; font-size: 11px; }
+.filter-item input[type=checkbox] { accent-color: #1f6feb; cursor: pointer; flex-shrink: 0; }
+.f-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.f-line { width: 16px; height: 2px; border-radius: 1px; flex-shrink: 0; }
+
+/* ---- info panel ---- */
+#info { flex: 1; overflow-y: auto; padding: 10px 14px; }
+#info h2 { font-size: 11px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .05em; }
+#info-content { font-size: 11px; line-height: 1.6; color: #8b949e; }
+.field { margin-bottom: 6px; }
+.field-key { color: #58a6ff; }
+.field-val { word-break: break-all; color: #c9d1d9; }
+.edge-item { padding: 2px 0; border-bottom: 1px solid #21262d; font-size: 10px; }
+.edge-type { color: #f78166; }
+.node-btn { background: none; border: 1px solid #30363d; border-radius: 3px; color: #58a6ff; cursor: pointer; font-size: 10px; padding: 1px 5px; margin-left: 4px; font-family: inherit; }
+.node-btn:hover { border-color: #58a6ff; }
+
+/* ---- status ---- */
+#status { padding: 7px 14px; font-size: 10px; color: #8b949e; border-top: 1px solid #30363d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- canvas ---- */
+#canvas { flex: 1; position: relative; }
+svg { width: 100%; height: 100%; cursor: grab; }
+svg:active { cursor: grabbing; }
+
+.link { fill: none; stroke-opacity: 0.45; }
+.node-g circle { stroke-width: 1.5; cursor: pointer; }
+.node-g circle:hover { stroke-width: 2.5; }
+.node-g text { font-size: 9px; fill: #8b949e; pointer-events: none; }
+.node-g.selected circle { stroke: #f0f6fc !important; stroke-width: 3 !important; }
+.node-g.dimmed { opacity: 0.15; }
+.link.dimmed { opacity: 0.05; }
+
+/* tooltip */
+#tooltip {
+  position: absolute; background: #21262d; border: 1px solid #30363d; border-radius: 5px;
+  padding: 5px 9px; font-size: 11px; pointer-events: none; display: none;
+  max-width: 280px; word-break: break-all; z-index: 100; color: #c9d1d9; line-height: 1.5;
+}
+
+/* loading overlay */
+#loading {
+  position: absolute; inset: 0; background: rgba(13,17,23,.7);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: #8b949e; display: none;
+}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>mcp-indexer graph</h1>
+
+  <div id="controls">
+    <div id="mode-tabs">
+      <div class="tab active" id="tab-full" onclick="setMode('full')">Full graph</div>
+      <div class="tab" id="tab-node" onclick="setMode('node')">From node</div>
+    </div>
+    <div id="node-controls">
+      <div>
+        <label class="small">Node ID</label>
+        <input id="node-input" type="text" placeholder="f:src/app.py" />
+      </div>
+      <div>
+        <label class="small">Depth <span id="depth-val">2</span></label>
+        <div class="depth-row">
+          <input id="depth-slider" type="range" min="1" max="6" value="2"
+            oninput="document.getElementById('depth-val').textContent=this.value" />
+        </div>
+      </div>
+      <button id="load-btn" onclick="loadGraph()">Load</button>
+    </div>
+  </div>
+
+  <div id="filters">
+    <h2>Filters</h2>
+    <div class="filter-group">
+      <div class="filter-group-title">
+        Edge types
+        <span><a onclick="toggleAll('edge',true)">all</a> / <a onclick="toggleAll('edge',false)">none</a></span>
+      </div>
+      <div id="edge-filters"></div>
+    </div>
+    <div class="filter-group">
+      <div class="filter-group-title">
+        Node types
+        <span><a onclick="toggleAll('node',true)">all</a> / <a onclick="toggleAll('node',false)">none</a></span>
+      </div>
+      <div id="node-filters"></div>
+    </div>
+  </div>
+
+  <div id="info">
+    <h2>Node info</h2>
+    <div id="info-content"><span style="color:#6e7681">Click a node to see details</span></div>
+  </div>
+
+  <div id="status">—</div>
+</div>
+
+<div id="canvas">
+  <svg id="svg"></svg>
+  <div id="tooltip"></div>
+  <div id="loading">Computing layout…</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>
+const NODE_COLOR = { file:'#58a6ff', module:'#3fb950', symbol:'#d29922', unresolved:'#6e7681' };
+const EDGE_COLOR = { imports:'#58a6ff', contains:'#3fb950', defines:'#d29922', calls:'#f78166', base:'#bc8cff' };
+const NODE_R     = { file:6, module:7, symbol:5, unresolved:4 };
+
+// ---- state ----
+let mode = 'full';
+let graphData = { nodes:[], links:[] };   // full loaded data (with computed positions)
+let svgLinks, svgNodes;                   // d3 selections for filter toggling
+let selectedId = null;
+
+// ---- helpers ----
+function nodeTypeOf(id) {
+  if (id.startsWith('f:')) return 'file';
+  if (id.startsWith('m:')) return 'module';
+  if (id.startsWith('s:')) return 'symbol';
+  return 'unresolved';
+}
+function nodeLabelOf(id) {
+  if (id.startsWith('f:')) { const p=id.slice(2); return p.split('/').pop()||p; }
+  if (id.startsWith('m:')) { const ps=id.split(':'); return ps.slice(2).join(':')||id; }
+  if (id.startsWith('s:')) { const ps=id.split(':'); return ps[2]||id; }
+  if (id.startsWith('x:')) return id.slice(2);
+  return id;
+}
+function edgeColor(t) { return EDGE_COLOR[t]||'#8b949e'; }
+function status(msg) { document.getElementById('status').textContent = msg; }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ---- mode ----
+function setMode(m) {
+  mode = m;
+  document.getElementById('tab-full').classList.toggle('active', m==='full');
+  document.getElementById('tab-node').classList.toggle('active', m==='node');
+  document.getElementById('node-controls').classList.toggle('visible', m==='node');
+  if (m==='full') loadGraph();
+}
+
+// ---- filters state ----
+const edgeFilters = {};  // type → bool
+const nodeFilters = {};  // type → bool
+
+function buildFilterUI(edgeTypes, nodeTypes) {
+  const ef = document.getElementById('edge-filters');
+  ef.innerHTML = '';
+  edgeTypes.forEach(t => {
+    if (!(t in edgeFilters)) edgeFilters[t] = true;
+    ef.insertAdjacentHTML('beforeend', `
+      <label class="filter-item">
+        <input type="checkbox" data-kind="edge" data-type="${t}" ${edgeFilters[t]?'checked':''} onchange="onFilterChange(this)">
+        <div class="f-line" style="background:${edgeColor(t)}"></div>
+        ${t}
+      </label>`);
+  });
+
+  const nf = document.getElementById('node-filters');
+  nf.innerHTML = '';
+  nodeTypes.forEach(t => {
+    if (!(t in nodeFilters)) nodeFilters[t] = true;
+    nf.insertAdjacentHTML('beforeend', `
+      <label class="filter-item">
+        <input type="checkbox" data-kind="node" data-type="${t}" ${nodeFilters[t]?'checked':''} onchange="onFilterChange(this)">
+        <div class="f-dot" style="background:${NODE_COLOR[t]||'#8b949e'}"></div>
+        ${t}
+      </label>`);
+  });
+}
+
+function onFilterChange(el) {
+  const kind = el.dataset.kind;
+  const type = el.dataset.type;
+  if (kind === 'edge') edgeFilters[type] = el.checked;
+  if (kind === 'node') nodeFilters[type] = el.checked;
+  applyFilters();
+}
+
+function toggleAll(kind, val) {
+  const map = kind==='edge' ? edgeFilters : nodeFilters;
+  Object.keys(map).forEach(k => map[k]=val);
+  document.querySelectorAll(`input[data-kind="${kind}"]`).forEach(cb => cb.checked=val);
+  applyFilters();
+}
+
+function applyFilters() {
+  if (!svgLinks || !svgNodes) return;
+
+  function linkVisible(l) {
+    if (!edgeFilters[l.type]) return false;
+    const sType = typeof l.source==='object' ? l.source.type : nodeTypeOf(typeof l.source==='object' ? l.source.id : l.source);
+    const tType = typeof l.target==='object' ? l.target.type : nodeTypeOf(typeof l.target==='object' ? l.target.id : l.target);
+    return nodeFilters[sType] && nodeFilters[tType];
+  }
+
+  // determine which nodes are "alive" (type visible AND have ≥1 visible edge)
+  const visibleEdgeNodeIds = new Set();
+  graphData.links.forEach(l => {
+    if (linkVisible(l)) {
+      const sid = typeof l.source==='object' ? l.source.id : l.source;
+      const tid = typeof l.target==='object' ? l.target.id : l.target;
+      visibleEdgeNodeIds.add(sid);
+      visibleEdgeNodeIds.add(tid);
+    }
+  });
+
+  svgLinks.style('display', l => linkVisible(l) ? null : 'none');
+
+  svgNodes.style('display', d => {
+    if (!nodeFilters[d.type]) return 'none';
+    if (!visibleEdgeNodeIds.has(d.id)) return 'none';
+    return null;
+  });
+
+  const visN = svgNodes.filter(d => nodeFilters[d.type] && visibleEdgeNodeIds.has(d.id)).size();
+  const visL = svgLinks.filter(l => linkVisible(l)).size();
+  status(`${visN} nodes, ${visL} edges shown  (total: ${graphData.nodes.length} / ${graphData.links.length})`);
+}
+
+// ---- load ----
+async function loadGraph() {
+  document.getElementById('load-btn').disabled = true;
+  document.getElementById('loading').style.display = 'flex';
+  status('Loading…');
+  try {
+    let url;
+    if (mode==='full') {
+      url = '/api/graph';
+    } else {
+      const nodeId = document.getElementById('node-input').value.trim();
+      const depth  = document.getElementById('depth-slider').value;
+      if (!nodeId) { status('Enter a node ID'); document.getElementById('load-btn').disabled=false; document.getElementById('loading').style.display='none'; return; }
+      url = `/api/neighbors?node=${encodeURIComponent(nodeId)}&depth=${depth}`;
+    }
+    const resp = await fetch(url);
+    if (!resp.ok) { status(`Error ${resp.status}: ${await resp.text()}`); return; }
+    const data = await resp.json();
+
+    // compute layout synchronously (no animation)
+    await layoutAndRender(data);
+  } catch(e) {
+    status(`Error: ${e.message}`);
+  }
+  document.getElementById('load-btn').disabled = false;
+  document.getElementById('loading').style.display = 'none';
+}
+
+// ---- layout (static) ----
+async function layoutAndRender(data) {
+  // yield to browser so "Computing layout…" appears
+  await new Promise(r => setTimeout(r, 0));
+
+  const W = document.getElementById('canvas').clientWidth;
+  const H = document.getElementById('canvas').clientHeight;
+
+  const sim = d3.forceSimulation(data.nodes)
+    .force('link', d3.forceLink(data.links).id(d=>d.id).distance(70).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(-180))
+    .force('center', d3.forceCenter(W/2, H/2))
+    .force('collision', d3.forceCollide(16))
+    .stop();
+
+  // run synchronously — no DOM updates during ticks
+  const ticks = Math.min(Math.ceil(Math.log(data.nodes.length + 2) * 200), 400);
+  for (let i = 0; i < ticks; i++) sim.tick();
+
+  graphData = data;
+  renderGraph(data);
+}
+
+// ---- render (one-shot) ----
+function renderGraph(data) {
+  selectedId = null;
+  document.getElementById('info-content').innerHTML = '<span style="color:#6e7681">Click a node to see details</span>';
+
+  const svg = d3.select('#svg');
+  svg.selectAll('*').remove();
+
+  const g = svg.append('g');
+  svg.call(d3.zoom().scaleExtent([0.03, 12]).on('zoom', e => g.attr('transform', e.transform)));
+
+  // markers (one per edge type)
+  const edgeTypes = [...new Set(data.links.map(l=>l.type))];
+  const nodeTypes  = [...new Set(data.nodes.map(n=>n.type))];
+  buildFilterUI(edgeTypes, nodeTypes);
+
+  const defs = svg.append('defs');
+  edgeTypes.forEach(t => {
+    defs.append('marker')
+      .attr('id', `arr-${t}`)
+      .attr('viewBox', '0 -4 8 8').attr('refX', 16).attr('refY', 0)
+      .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
+      .append('path').attr('d','M0,-4L8,0L0,4').attr('fill', edgeColor(t)).attr('opacity', 0.7);
+  });
+
+  // links
+  svgLinks = g.append('g').selectAll('line')
+    .data(data.links)
+    .join('line')
+    .attr('class','link')
+    .attr('stroke', d=>edgeColor(d.type))
+    .attr('stroke-width', 1)
+    .attr('marker-end', d=>`url(#arr-${d.type})`)
+    .attr('x1', d=>d.source.x).attr('y1', d=>d.source.y)
+    .attr('x2', d=>d.target.x).attr('y2', d=>d.target.y);
+
+  // nodes
+  svgNodes = g.append('g').selectAll('g')
+    .data(data.nodes)
+    .join('g')
+    .attr('class','node-g')
+    .attr('transform', d=>`translate(${d.x},${d.y})`)
+    .on('click', (_e,d) => selectNode(d))
+    .on('mouseover', (e,d) => showTooltip(e,d))
+    .on('mouseout', hideTooltip);
+
+  svgNodes.append('circle')
+    .attr('r', d=>NODE_R[d.type]||5)
+    .attr('fill', d=>NODE_COLOR[d.type]||'#8b949e')
+    .attr('stroke', d=>(d3.color(NODE_COLOR[d.type]||'#8b949e')||{}).darker(1));
+
+  svgNodes.append('text')
+    .attr('dx', d=>(NODE_R[d.type]||5)+3)
+    .attr('dy','0.35em')
+    .text(d=>d.label);
+
+  applyFilters();
+}
+
+// ---- select node ----
+function selectNode(d) {
+  selectedId = d.id;
+  svgNodes.classed('selected', n=>n.id===d.id);
+
+  const nodeEdges = graphData.links.filter(e => {
+    const s = typeof e.source==='object' ? e.source.id : e.source;
+    const t = typeof e.target==='object' ? e.target.id : e.target;
+    return s===d.id || t===d.id;
+  });
+
+  const edgesHtml = nodeEdges.map(e => {
+    const s = typeof e.source==='object' ? e.source.id : e.source;
+    const t = typeof e.target==='object' ? e.target.id : e.target;
+    const other = s===d.id ? t : s;
+    const dir   = s===d.id ? '→' : '←';
+    const otherLabel = nodeLabelOf(other);
+    return `<div class="edge-item">
+      <span class="edge-type">${e.type}</span> ${dir}
+      <span title="${escHtml(other)}">${escHtml(otherLabel)}</span>
+      <button class="node-btn" onclick="jumpTo('${escHtml(other)}')">focus</button>
+    </div>`;
+  }).join('');
+
+  document.getElementById('info-content').innerHTML = `
+    <div class="field"><span class="field-key">id</span><br><span class="field-val">${escHtml(d.id)}</span></div>
+    <div class="field"><span class="field-key">type</span> <span class="field-val">${d.type}</span></div>
+    <div class="field"><span class="field-key">edges (${nodeEdges.length})</span>
+      <div style="margin-top:4px">${edgesHtml||'<span style="color:#6e7681">none</span>'}</div>
+    </div>`;
+}
+
+// jump: switch to "from node" mode and load from that nodeId
+function jumpTo(nodeId) {
+  setMode('node');
+  document.getElementById('node-input').value = nodeId;
+  loadGraph();
+}
+
+// ---- tooltip ----
+function showTooltip(e, d) {
+  const t = document.getElementById('tooltip');
+  t.style.display = 'block';
+  t.innerHTML = `<b style="color:${NODE_COLOR[d.type]||'#8b949e'}">${d.type}</b><br>${escHtml(d.id)}`;
+  const rect = document.getElementById('canvas').getBoundingClientRect();
+  t.style.left = (e.clientX - rect.left + 12) + 'px';
+  t.style.top  = (e.clientY - rect.top  + 12) + 'px';
+}
+function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
+
+// ---- init ----
+loadGraph();
+</script>
+</body>
+</html>

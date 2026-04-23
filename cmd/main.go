@@ -33,6 +33,7 @@ func rootCmd() *cobra.Command {
 		searchCmd(),
 		fileContextCmd(),
 		neighborsCmd(),
+		vizCmd(),
 	)
 	return root
 }
@@ -133,13 +134,13 @@ func doSyncCmd() *cobra.Command {
 }
 
 func searchCmd() *cobra.Command {
-	var symN, fileN, modN int
+	var symN, fileN int
 	cmd := &cobra.Command{
 		Use:   "search <serviceId> <query>",
-		Short: "Search symbols/files/modules",
+		Short: "Search symbols/files",
 		Args:  cobra.ExactArgs(2),
 		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
-			limits := app.SearchLimits{Sym: symN, File: fileN, Mod: modN}
+			limits := app.SearchLimits{Sym: symN, File: fileN}
 			res, err := a.Search(args[0], args[1], limits)
 			if err != nil {
 				return err
@@ -149,7 +150,6 @@ func searchCmd() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&symN, "sym", 20, "max symbols (0=skip)")
 	cmd.Flags().IntVar(&fileN, "file", 10, "max files (0=skip)")
-	cmd.Flags().IntVar(&modN, "mod", 5, "max modules (0=skip)")
 	return cmd
 }
 

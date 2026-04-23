@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"mcp-indexer/internal/index"
 )
 
 // SearchHit — результат поиска по одному doc_id.
@@ -53,7 +55,7 @@ type FileContextRow struct {
 	Key        string
 	RelPath    string
 	Lang       string
-	ModuleName string
+	ModuleName string // вычисляется из rel_path, для Python
 	Imports    []string
 	Symbols    []SymbolSummary
 }
@@ -85,17 +87,18 @@ func GetFileContext(db *sql.DB, keyOrPath string) (*FileContextRow, error) {
 
 func getFileContextByField(db *sql.DB, field, value string) (*FileContextRow, error) {
 	q := fmt.Sprintf(
-		`SELECT f.file_id, f.key, f.rel_path, f.lang, COALESCE(m.module_name,'')
-		 FROM files f LEFT JOIN modules m ON f.module_id = m.module_id
-		 WHERE f.%s = ?`, field,
+		`SELECT file_id, key, rel_path, lang FROM files WHERE %s = ?`, field,
 	)
 	row := db.QueryRow(q, value)
 	var r FileContextRow
-	if err := row.Scan(&r.FileID, &r.Key, &r.RelPath, &r.Lang, &r.ModuleName); err != nil {
+	if err := row.Scan(&r.FileID, &r.Key, &r.RelPath, &r.Lang); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("get file by %s=%q: %w", field, value, err)
+	}
+	if r.Lang == "python" {
+		r.ModuleName = index.PythonModuleName(r.RelPath)
 	}
 
 	// imports
@@ -168,22 +171,13 @@ type CallerRef struct {
 	Via     string `json:"via"` // moduleId или symbolId, на который указывает calls-ребро
 }
 
-// GetCallers возвращает файлы с calls-рёбрами в symbolId или moduleId символа.
-func GetCallers(db *sql.DB, symbolID, moduleID string) ([]CallerRef, error) {
-	targets := []string{symbolID}
-	if moduleID != "" {
-		targets = append(targets, moduleID)
-	}
-	ph := "?" + strings.Repeat(",?", len(targets)-1)
-	args := make([]any, len(targets))
-	for i, t := range targets {
-		args[i] = t
-	}
+// GetCallers возвращает файлы с calls-рёбрами в symbolId.
+func GetCallers(db *sql.DB, symbolID string) ([]CallerRef, error) {
 	rows, err := db.Query(
 		`SELECT COALESCE(f.key, e.from_id), e.to_id
 		 FROM edges e
 		 LEFT JOIN files f ON f.file_id = e.from_id
-		 WHERE e.type = 'calls' AND e.to_id IN (`+ph+`)`, args...,
+		 WHERE e.type = 'calls' AND e.to_id = ?`, symbolID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get callers: %w", err)
@@ -204,6 +198,24 @@ func GetCallers(db *sql.DB, symbolID, moduleID string) ([]CallerRef, error) {
 		callers = append(callers, CallerRef{FileKey: fileKey, Via: toID})
 	}
 	return callers, rows.Err()
+}
+
+// BuildModuleFileMap возвращает map moduleName → fileID для всех Python-файлов в транзакции.
+func BuildModuleFileMap(tx *sql.Tx) (map[string]string, error) {
+	rows, err := tx.Query(`SELECT file_id, rel_path FROM files WHERE lang = 'python'`)
+	if err != nil {
+		return nil, fmt.Errorf("query files for module map: %w", err)
+	}
+	defer rows.Close()
+	m := make(map[string]string)
+	for rows.Next() {
+		var fileID, relPath string
+		if err := rows.Scan(&fileID, &relPath); err != nil {
+			return nil, err
+		}
+		m[index.PythonModuleName(relPath)] = fileID
+	}
+	return m, rows.Err()
 }
 
 // NeighborEdge — ребро в графе (формат basic: тройка [type, from, to]).
@@ -286,6 +298,24 @@ func directEdges(db *sql.DB, nodeID, typeFilter string) ([]NeighborEdge, error) 
 	return result, rows.Err()
 }
 
+// GetAllEdges возвращает все рёбра из таблицы edges.
+func GetAllEdges(db *sql.DB) ([]NeighborEdge, error) {
+	rows, err := db.Query(`SELECT type, from_id, to_id FROM edges`)
+	if err != nil {
+		return nil, fmt.Errorf("query all edges: %w", err)
+	}
+	defer rows.Close()
+	var result []NeighborEdge
+	for rows.Next() {
+		var e NeighborEdge
+		if err := rows.Scan(&e[0], &e[1], &e[2]); err != nil {
+			return nil, err
+		}
+		result = append(result, e)
+	}
+	return result, rows.Err()
+}
+
 func buildTypeFilter(types []string) string {
 	if len(types) == 0 {
 		return ""
@@ -301,7 +331,6 @@ func buildTypeFilter(types []string) string {
 // OverviewCounts — сводка для getProjectOverview.
 type OverviewCounts struct {
 	Files   int `json:"files"`
-	Modules int `json:"modules"`
 	Symbols int `json:"symbols"`
 	Edges   int `json:"edges"`
 }
@@ -309,9 +338,6 @@ type OverviewCounts struct {
 func GetOverview(db *sql.DB) (*OverviewCounts, error) {
 	var o OverviewCounts
 	if err := db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&o.Files); err != nil {
-		return nil, err
-	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM modules`).Scan(&o.Modules); err != nil {
 		return nil, err
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM symbols`).Scan(&o.Symbols); err != nil {

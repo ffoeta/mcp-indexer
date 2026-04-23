@@ -3,18 +3,12 @@ PRAGMA foreign_keys = ON;
 PRAGMA cache_size = -65536;  -- 64 MB page cache
 PRAGMA temp_store = MEMORY;
 
-CREATE TABLE IF NOT EXISTS modules (
-    module_id   TEXT PRIMARY KEY,
-    module_name TEXT NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS files (
-    file_id   TEXT PRIMARY KEY,
-    key       TEXT NOT NULL UNIQUE,
-    rel_path  TEXT NOT NULL,
-    lang      TEXT NOT NULL,
-    hash      TEXT NOT NULL,
-    module_id TEXT REFERENCES modules(module_id) ON DELETE SET NULL
+    file_id  TEXT PRIMARY KEY,
+    key      TEXT NOT NULL UNIQUE,
+    rel_path TEXT NOT NULL,
+    lang     TEXT NOT NULL,
+    hash     TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_files_key ON files(key);

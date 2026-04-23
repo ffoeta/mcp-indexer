@@ -78,7 +78,7 @@ func TestStore_Tables_AllExist(t *testing.T) {
 	}
 	defer s.Close()
 
-	tables := []string{"files", "modules", "symbols", "imports", "edges", "term_postings"}
+	tables := []string{"files", "symbols", "imports", "edges", "term_postings"}
 	for _, tbl := range tables {
 		var name string
 		err := s.DB().QueryRow(

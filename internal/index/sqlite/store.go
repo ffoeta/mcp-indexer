@@ -31,6 +31,9 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("init DDL: %w", err)
 	}
+	// Migration: drop legacy modules table and module_id column
+	db.Exec(`DROP TABLE IF EXISTS modules`)                              //nolint:errcheck
+	db.Exec(`ALTER TABLE files DROP COLUMN IF EXISTS module_id`)        //nolint:errcheck
 	return &Store{db: db}, nil
 }
 

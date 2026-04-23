@@ -135,7 +135,7 @@ func TestDebugConfigGet_ReturnsConfigPath(t *testing.T) {
 	Register(srv, a)
 	home := services.AppHome()
 
-	result := callTool(t, srv, "debug__config__get", nil)
+	result := callTool(t, srv, "debug_get_config", nil)
 	if result.IsError {
 		t.Fatalf("unexpected error: %v", result.Content)
 	}
@@ -158,7 +158,7 @@ func TestSymbolFullGet_UnknownService_ReturnsError(t *testing.T) {
 	a := makeTestApp(t)
 	Register(srv, a)
 
-	result := callTool(t, srv, "symbol__full__get", map[string]interface{}{
+	result := callTool(t, srv, "get_symbol_full", map[string]interface{}{
 		"serviceId": "ghost",
 		"symbolId":  "s:py:Foo:a.py:1",
 	})
@@ -200,7 +200,7 @@ func TestServiceAdd_WithMeta_PersistsMeta(t *testing.T) {
 	Register(srv, a)
 	root := t.TempDir()
 
-	result := callTool(t, srv, "service__add", map[string]interface{}{
+	result := callTool(t, srv, "add_service", map[string]interface{}{
 		"rootAbs":      root,
 		"serviceId":    "meta-test",
 		"description":  "test service",
@@ -230,12 +230,12 @@ func TestServiceMetaUpdate_UpdatesFields(t *testing.T) {
 	root := t.TempDir()
 
 	// Register service first
-	callTool(t, srv, "service__add", map[string]interface{}{
+	callTool(t, srv, "add_service", map[string]interface{}{
 		"rootAbs":   root,
 		"serviceId": "upd-test",
 	})
 
-	result := callTool(t, srv, "service__meta__update", map[string]interface{}{
+	result := callTool(t, srv, "update_service_meta", map[string]interface{}{
 		"serviceId":    "upd-test",
 		"description":  "new description",
 		"mainEntities": `["entity1"]`,
@@ -260,12 +260,12 @@ func TestServiceMetaUpdate_InvalidMainEntities_ReturnsError(t *testing.T) {
 	Register(srv, a)
 	root := t.TempDir()
 
-	callTool(t, srv, "service__add", map[string]interface{}{
+	callTool(t, srv, "add_service", map[string]interface{}{
 		"rootAbs":   root,
 		"serviceId": "bad-entities",
 	})
 
-	result := callTool(t, srv, "service__meta__update", map[string]interface{}{
+	result := callTool(t, srv, "update_service_meta", map[string]interface{}{
 		"serviceId":    "bad-entities",
 		"mainEntities": `not-json`,
 	})
@@ -281,13 +281,13 @@ func TestServiceListGet_ReturnsIdToRootAbs(t *testing.T) {
 	Register(srv, a)
 	root := t.TempDir()
 
-	callTool(t, srv, "service__add", map[string]interface{}{
+	callTool(t, srv, "add_service", map[string]interface{}{
 		"rootAbs":     root,
 		"serviceId":   "list-test",
 		"description": "should not appear in list",
 	})
 
-	result := callTool(t, srv, "service__list__get", nil)
+	result := callTool(t, srv, "get_service_list", nil)
 	if result.IsError {
 		t.Fatalf("unexpected error: %v", result.Content)
 	}
@@ -315,14 +315,14 @@ func TestServiceInfoGet_ReturnsFullMeta(t *testing.T) {
 	Register(srv, a)
 	root := t.TempDir()
 
-	callTool(t, srv, "service__add", map[string]interface{}{
+	callTool(t, srv, "add_service", map[string]interface{}{
 		"rootAbs":      root,
 		"serviceId":    "info-full",
 		"description":  "full info test",
 		"mainEntities": `["entity1","entity2"]`,
 	})
 
-	result := callTool(t, srv, "service__info__get", map[string]interface{}{
+	result := callTool(t, srv, "get_service_meta", map[string]interface{}{
 		"serviceId": "info-full",
 	})
 	if result.IsError {
@@ -337,14 +337,14 @@ func TestServiceInfoGet_ReturnsFullMeta(t *testing.T) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 	if m["description"] != "full info test" {
-		t.Errorf("description not returned by service__info__get: %v", m["description"])
+		t.Errorf("description not returned by get_service_meta: %v", m["description"])
 	}
 	entities, ok := m["mainEntities"].([]interface{})
 	if !ok || len(entities) != 2 {
 		t.Errorf("mainEntities not returned correctly: %v", m["mainEntities"])
 	}
 	if _, hasConfig := m["config"]; hasConfig {
-		t.Error("config must not be present in service__info__get — use debug__project__config__get")
+		t.Error("config must not be present in get_service_meta — use debug_get_project_config")
 	}
 }
 
