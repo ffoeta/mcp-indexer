@@ -3,19 +3,19 @@ package app
 import (
 	"bufio"
 	"fmt"
-	"mcp-indexer/internal/parse"
-	"mcp-indexer/internal/parse/java"
-	"mcp-indexer/internal/parse/python"
-	"mcp-indexer/internal/services"
-	"mcp-indexer/internal/syncer"
-	"mcp-indexer/internal/tokenize"
+	"mcp-indexer/internal/common/services"
+	"mcp-indexer/internal/common/store"
+	"mcp-indexer/internal/common/tokenize"
+	"mcp-indexer/internal/indexer/engine"
+	"mcp-indexer/internal/indexer/parse"
+	"mcp-indexer/internal/indexer/parse/java"
+	"mcp-indexer/internal/indexer/parse/python"
+	"mcp-indexer/internal/searcher/query"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
-
-	sqliteq "mcp-indexer/internal/index/sqlite"
 )
 
 // App — центральный объект приложения.
@@ -23,7 +23,7 @@ type App struct {
 	Registry *services.Registry
 
 	mu     sync.Mutex
-	stores map[string]*sqliteq.Store
+	stores map[string]*store.Store
 }
 
 // New загружает реестр.
@@ -34,7 +34,7 @@ func New() (*App, error) {
 	}
 	return &App{
 		Registry: reg,
-		stores:   make(map[string]*sqliteq.Store),
+		stores:   make(map[string]*store.Store),
 	}, nil
 }
 
@@ -42,7 +42,7 @@ func New() (*App, error) {
 func NewFromRegistry(reg *services.Registry) *App {
 	return &App{
 		Registry: reg,
-		stores:   make(map[string]*sqliteq.Store),
+		stores:   make(map[string]*store.Store),
 	}
 }
 
@@ -86,7 +86,44 @@ func (a *App) AddService(rootAbs, svcID, description string, mainEntities []stri
 	if err := a.Registry.Save(); err != nil {
 		return "", err
 	}
+
+	// Автоматически индексируем при добавлении
+	if err := a.index(svcID); err != nil {
+		return svcID, fmt.Errorf("index %s: %w", svcID, err)
+	}
 	return svcID, nil
+}
+
+// Reindex удаляет весь индекс сервиса и переиндексирует с нуля.
+func (a *App) Reindex(svcID string) error {
+	if _, ok := a.Registry.Get(svcID); !ok {
+		return fmt.Errorf("service %q not found", svcID)
+	}
+	return a.index(svcID)
+}
+
+// index выполняет полную индексацию сервиса.
+func (a *App) index(svcID string) error {
+	entry, ok := a.Registry.Get(svcID)
+	if !ok {
+		return fmt.Errorf("service %q not found", svcID)
+	}
+	st, err := a.getStore(svcID)
+	if err != nil {
+		return err
+	}
+	cfg, err := services.LoadConfig(services.ConfigPath(svcID))
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	matcher, err := services.LoadMatcher(services.IgnoreFilePath(svcID))
+	if err != nil {
+		return fmt.Errorf("load matcher: %w", err)
+	}
+	norm := buildNorm(cfg)
+	parsers := buildParsers()
+	svcDir := services.ServiceDir(svcID)
+	return engine.Index(st.DB(), entry.RootAbs, cfg, matcher, parsers, norm, svcDir)
 }
 
 func (a *App) UpdateServiceMeta(svcID, description string, mainEntities []string) error {
@@ -120,51 +157,25 @@ func (a *App) GetServiceConfig(svcID string) (interface{}, error) {
 	return cfg, nil
 }
 
-// ---- sync ----
-
-func (a *App) PrepareSync(svcID string) (*syncer.PrepareSyncResult, error) {
-	entry, ok := a.Registry.Get(svcID)
-	if !ok {
-		return nil, fmt.Errorf("service %q not found", svcID)
-	}
-	return syncer.PrepareSync(entry, svcID)
-}
-
-func (a *App) DoSync(svcID string) (*syncer.DoSyncResult, error) {
-	entry, ok := a.Registry.Get(svcID)
-	if !ok {
-		return nil, fmt.Errorf("service %q not found", svcID)
-	}
-	store, err := a.getStore(svcID)
-	if err != nil {
-		return nil, err
-	}
-	cfg, err := services.LoadConfig(services.ConfigPath(svcID))
-	if err != nil {
-		return nil, err
-	}
-	return syncer.DoSync(entry, svcID, store, buildParsers(), buildNorm(cfg))
-}
-
 // ---- query ----
 
 func (a *App) GetProjectOverview(svcID string) (interface{}, error) {
-	store, err := a.getStore(svcID)
+	st, err := a.getStore(svcID)
 	if err != nil {
 		return nil, err
 	}
-	return sqliteq.GetOverview(store.DB())
+	return query.GetOverview(st.DB())
 }
 
-func (a *App) Search(svcID, query string, limits SearchLimits) (*SearchResponse, error) {
-	store, err := a.getStore(svcID)
+func (a *App) Search(svcID, queryStr string, limits SearchLimits) (*SearchResponse, error) {
+	st, err := a.getStore(svcID)
 	if err != nil {
 		return nil, err
 	}
 	cfg, _ := services.LoadConfig(services.ConfigPath(svcID))
-	terms := buildNorm(cfg).Tokenize(query)
+	terms := buildNorm(cfg).Tokenize(queryStr)
 
-	hits, err := sqliteq.Search(store.DB(), terms)
+	hits, err := query.Search(st.DB(), terms)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +185,7 @@ func (a *App) Search(svcID, query string, limits SearchLimits) (*SearchResponse,
 		docID := h.DocID
 		switch {
 		case strings.HasPrefix(docID, "s:") && limits.Sym > 0 && len(resp.Sym) < limits.Sym:
-			row, err := sqliteq.GetSymbolContext(store.DB(), docID)
+			row, err := query.GetSymbolContext(st.DB(), docID)
 			if err != nil || row == nil {
 				continue
 			}
@@ -190,11 +201,11 @@ func (a *App) Search(svcID, query string, limits SearchLimits) (*SearchResponse,
 }
 
 func (a *App) GetFileContext(svcID, path string) (interface{}, error) {
-	store, err := a.getStore(svcID)
+	st, err := a.getStore(svcID)
 	if err != nil {
 		return nil, err
 	}
-	row, err := sqliteq.GetFileContext(store.DB(), path)
+	row, err := query.GetFileContext(st.DB(), path)
 	if err != nil {
 		return nil, err
 	}
@@ -205,11 +216,11 @@ func (a *App) GetFileContext(svcID, path string) (interface{}, error) {
 }
 
 func (a *App) GetSymbolContext(svcID, symbolID string) (interface{}, error) {
-	store, err := a.getStore(svcID)
+	st, err := a.getStore(svcID)
 	if err != nil {
 		return nil, err
 	}
-	row, err := sqliteq.GetSymbolContext(store.DB(), symbolID)
+	row, err := query.GetSymbolContext(st.DB(), symbolID)
 	if err != nil {
 		return nil, err
 	}
@@ -243,16 +254,16 @@ type SymbolFullResponse struct {
 	StartLine int                  `json:"startLine"`
 	EndLine   int                  `json:"endLine"`
 	Code      string               `json:"code"`
-	Callers   []sqliteq.CallerRef  `json:"callers"`
-	Edges     []sqliteq.NeighborEdge `json:"edges"`
+	Callers   []query.CallerRef  `json:"callers"`
+	Edges     []query.NeighborEdge `json:"edges"`
 }
 
 func (a *App) GetSymbolFull(svcID, symbolID string, edgeDepth int) (*SymbolFullResponse, error) {
-	store, err := a.getStore(svcID)
+	st, err := a.getStore(svcID)
 	if err != nil {
 		return nil, err
 	}
-	row, err := sqliteq.GetSymbolContext(store.DB(), symbolID)
+	row, err := query.GetSymbolContext(st.DB(), symbolID)
 	if err != nil {
 		return nil, err
 	}
@@ -260,12 +271,12 @@ func (a *App) GetSymbolFull(svcID, symbolID string, edgeDepth int) (*SymbolFullR
 		return nil, fmt.Errorf("symbol %q not found", symbolID)
 	}
 
-	callers, err := sqliteq.GetCallers(store.DB(), symbolID)
+	callers, err := query.GetCallers(st.DB(), symbolID)
 	if err != nil {
 		return nil, err
 	}
 
-	edges, err := sqliteq.GetNeighbors(store.DB(), symbolID, edgeDepth, nil)
+	edges, err := query.GetNeighbors(st.DB(), symbolID, edgeDepth, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -316,19 +327,19 @@ func readLines(absPath string, startLine, endLine int) (string, error) {
 }
 
 func (a *App) GetNeighbors(svcID, nodeID string, depth int, edgeTypes []string) (interface{}, error) {
-	store, err := a.getStore(svcID)
+	st, err := a.getStore(svcID)
 	if err != nil {
 		return nil, err
 	}
-	return sqliteq.GetNeighbors(store.DB(), nodeID, depth, edgeTypes)
+	return query.GetNeighbors(st.DB(), nodeID, depth, edgeTypes)
 }
 
-func (a *App) GetAllEdges(svcID string) ([]sqliteq.NeighborEdge, error) {
-	store, err := a.getStore(svcID)
+func (a *App) GetAllEdges(svcID string) ([]query.NeighborEdge, error) {
+	st, err := a.getStore(svcID)
 	if err != nil {
 		return nil, err
 	}
-	return sqliteq.GetAllEdges(store.DB())
+	return query.GetAllEdges(st.DB())
 }
 
 func (a *App) ListServicesSorted() []string {
@@ -339,7 +350,7 @@ func (a *App) ListServicesSorted() []string {
 
 // ---- internal ----
 
-func (a *App) getStore(svcID string) (*sqliteq.Store, error) {
+func (a *App) getStore(svcID string) (*store.Store, error) {
 	if _, ok := a.Registry.Get(svcID); !ok {
 		return nil, fmt.Errorf("service %q not found", svcID)
 	}
@@ -348,7 +359,7 @@ func (a *App) getStore(svcID string) (*sqliteq.Store, error) {
 	if s, ok := a.stores[svcID]; ok {
 		return s, nil
 	}
-	s, err := sqliteq.Open(services.DBPath(svcID))
+	s, err := store.Open(services.DBPath(svcID))
 	if err != nil {
 		return nil, fmt.Errorf("open db for %s: %w", svcID, err)
 	}

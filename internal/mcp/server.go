@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"mcp-indexer/internal/app"
-	"mcp-indexer/internal/services"
+	"mcp-indexer/internal/common/services"
 	"strings"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
@@ -113,32 +113,16 @@ func Register(srv *server.MCPServer, a *app.App) {
 	)
 
 	srv.AddTool(
-		mcpgo.NewTool("prepare_sync",
-			mcpgo.WithDescription("Stat-only diff: what would change (no writes)"),
-			mcpgo.WithString("serviceId", mcpgo.Required()),
-		),
-		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
-			id := req.GetString("serviceId", "")
-			res, err := a.PrepareSync(id)
-			if err != nil {
-				return errResult(err), nil
-			}
-			return jsonResult(res)
-		},
-	)
-
-	srv.AddTool(
 		mcpgo.NewTool("sync",
-			mcpgo.WithDescription("Hash diff + apply to index"),
+			mcpgo.WithDescription("Re-index a service from scratch (wipe + full re-index)"),
 			mcpgo.WithString("serviceId", mcpgo.Required()),
 		),
 		func(ctx context.Context, req mcpgo.CallToolRequest) (*mcpgo.CallToolResult, error) {
 			id := req.GetString("serviceId", "")
-			res, err := a.DoSync(id)
-			if err != nil {
+			if err := a.Reindex(id); err != nil {
 				return errResult(err), nil
 			}
-			return jsonResult(res)
+			return jsonResult(map[string]string{"status": "ok", "serviceId": id})
 		},
 	)
 
@@ -285,12 +269,12 @@ func helpPayload() map[string]interface{} {
 		"server":      "mcp-indexer",
 		"description": "MCP server for source code indexing. Scans Python and Java codebases, builds a SQLite index of files, modules, symbols, and dependency edges. Designed for LLM agents that need to navigate and understand large codebases.",
 		"workflow": []string{
-			"1. add_service       — register a codebase root (once)",
-			"2. sync           — index or re-index the codebase",
-			"3. get_service_list — see all registered services",
-			"4. search             — find symbols/files/modules by keyword",
+			"1. add_service       — register a codebase root (indexes automatically on first add)",
+			"2. get_service_list  — see all registered services",
+			"3. sync              — re-index a service from scratch when code changes",
+			"4. search            — find symbols/files by keyword",
 			"5. get_file_context / get_symbol_context / get_symbol_full — drill down",
-			"6. get_neighbors — traverse the dependency graph",
+			"6. get_neighbors     — traverse the dependency graph",
 		},
 		"tools": []toolDoc{
 			{
@@ -313,13 +297,8 @@ func helpPayload() map[string]interface{} {
 				Params:      []string{"serviceId (required)", "description?", "mainEntities? (JSON array)"},
 			},
 			{
-				Name:        "prepare_sync",
-				Description: "Stat-only dry run: shows which files would be added/modified/deleted without writing anything.",
-				Params:      []string{"serviceId (required)"},
-			},
-			{
 				Name:        "sync",
-				Description: "Hash diff + apply changes to the SQLite index. Run after add_service or when files change.",
+				Description: "Re-index a service from scratch. Call this when the codebase has changed and you need fresh index data.",
 				Params:      []string{"serviceId (required)"},
 			},
 			{

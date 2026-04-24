@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"mcp-indexer/internal/app"
-	"mcp-indexer/internal/viz"
+	"mcp-indexer/internal/ui"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -24,7 +24,7 @@ func vizCmd() *cobra.Command {
 				}
 				return fmt.Errorf("service %q not found\navailable: %s", svcID, strings.Join(ids, ", "))
 			}
-			return viz.Serve(a, svcID, port)
+			return ui.Serve(a, svcID, port)
 		}),
 	}
 	cmd.Flags().IntVar(&port, "port", 8080, "HTTP port for the visualization server")

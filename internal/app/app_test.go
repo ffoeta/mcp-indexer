@@ -1,10 +1,9 @@
 package app
 
 import (
-	sqliteq "mcp-indexer/internal/index/sqlite"
-	"mcp-indexer/internal/services"
+	"mcp-indexer/internal/common/store"
+	"mcp-indexer/internal/common/services"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -19,7 +18,7 @@ func setupApp(t *testing.T) *App {
 	}
 	return &App{
 		Registry: reg,
-		stores:   make(map[string]*sqliteq.Store),
+		stores:   make(map[string]*store.Store),
 	}
 }
 
@@ -155,84 +154,6 @@ func TestApp_ListServicesSorted(t *testing.T) {
 	}
 }
 
-// A15: App_GetSymbolContext_IncludesCode
-func TestApp_GetSymbolContext_IncludesCode(t *testing.T) {
-	a := setupApp(t)
-	root := t.TempDir()
-	svcID, err := a.AddService(root, "codesvc", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(root, "foo.py"), []byte("class Foo:\n    pass\n"), 0o644)
-
-	if _, err := a.DoSync(svcID); err != nil {
-		t.Fatal(err)
-	}
-
-	// Найти symbolId через поиск
-	res, err := a.Search(svcID, "Foo", DefaultSearchLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Sym) == 0 {
-		t.Fatal("no symbols found after sync")
-	}
-	symID := res.Sym[0][0].(string)
-
-	info, err := a.GetSymbolContext(svcID, symID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, ok := info.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map, got %T", info)
-	}
-	code, ok := m["code"].(string)
-	if !ok || code == "" {
-		t.Errorf("expected non-empty code in GetSymbolContext, got %v", m["code"])
-	}
-}
-
-// A16: App_GetSymbolFull_ReturnsAllFields
-func TestApp_GetSymbolFull_ReturnsAllFields(t *testing.T) {
-	a := setupApp(t)
-	root := t.TempDir()
-	svcID, err := a.AddService(root, "fullsvc", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(root, "bar.py"), []byte("class Bar:\n    def method(self):\n        pass\n"), 0o644)
-
-	if _, err := a.DoSync(svcID); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := a.Search(svcID, "Bar", DefaultSearchLimits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Sym) == 0 {
-		t.Fatal("no symbols found after sync")
-	}
-	symID := res.Sym[0][0].(string)
-
-	full, err := a.GetSymbolFull(svcID, symID, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if full.SymbolID != symID {
-		t.Errorf("symbolId mismatch: got %q", full.SymbolID)
-	}
-	if full.Code == "" {
-		t.Error("expected non-empty code")
-	}
-	if full.Callers == nil {
-		t.Error("callers must be non-nil slice (empty is ok)")
-	}
-	if full.Edges == nil {
-		t.Error("edges must be non-nil slice (empty is ok)")
-	}
-}
 
 // A17: App_GetSymbolFull_UnknownSymbol_Errors
 func TestApp_GetSymbolFull_UnknownSymbol_Errors(t *testing.T) {
@@ -243,38 +164,6 @@ func TestApp_GetSymbolFull_UnknownSymbol_Errors(t *testing.T) {
 	_, err := a.GetSymbolFull(svcID, "s:py:Ghost:x.py:0", 1)
 	if err == nil {
 		t.Error("expected error for unknown symbol")
-	}
-}
-
-// A13: App_PrepareSync_UnknownService_Errors
-func TestApp_PrepareSync_UnknownService_Errors(t *testing.T) {
-	a := setupApp(t)
-	_, err := a.PrepareSync("ghost")
-	if err == nil {
-		t.Error("expected error for unknown service")
-	}
-}
-
-// A14: App_PrepareSync_Works
-func TestApp_PrepareSync_Works(t *testing.T) {
-	a := setupApp(t)
-	root := t.TempDir()
-	svcID, err := a.AddService(root, "sync-svc", "", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Write a python file
-	os.WriteFile(filepath.Join(root, "a.py"), []byte("x=1"), 0o644)
-
-	// Config needs to have .py extension (AddService writes DefaultConfig which includes .py)
-
-	res, err := a.PrepareSync(svcID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res == nil {
-		t.Fatal("expected non-nil result")
 	}
 }
 

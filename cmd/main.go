@@ -28,8 +28,6 @@ func rootCmd() *cobra.Command {
 		serveCmd(),
 		listCmd(),
 		addCmd(),
-		prepareSyncCmd(),
-		doSyncCmd(),
 		searchCmd(),
 		fileContextCmd(),
 		neighborsCmd(),
@@ -101,36 +99,6 @@ func addCmd() *cobra.Command {
 	cmd.Flags().StringVar(&description, "description", "", "short description")
 	cmd.Flags().StringVar(&mainEntitiesRaw, "entities", "", "comma-separated main domain entities")
 	return cmd
-}
-
-func prepareSyncCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "prepare-sync <serviceId>",
-		Short: "Show what would change (no writes)",
-		Args:  cobra.ExactArgs(1),
-		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
-			res, err := a.PrepareSync(args[0])
-			if err != nil {
-				return err
-			}
-			return printJSON(res)
-		}),
-	}
-}
-
-func doSyncCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "do-sync <serviceId>",
-		Short: "Hash diff + apply to index",
-		Args:  cobra.ExactArgs(1),
-		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
-			res, err := a.DoSync(args[0])
-			if err != nil {
-				return err
-			}
-			return printJSON(res)
-		}),
-	}
 }
 
 func searchCmd() *cobra.Command {

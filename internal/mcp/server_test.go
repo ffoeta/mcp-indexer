@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"mcp-indexer/internal/app"
-	"mcp-indexer/internal/services"
+	"mcp-indexer/internal/common/services"
 	"os"
 	"strings"
 	"testing"
@@ -356,9 +356,6 @@ func makeTestAppWithService(t *testing.T) (*app.App, string) {
 	os.WriteFile(root+"/foo.py", []byte("class Foo:\n    pass\n"), 0o644)
 	svcID, err := a.AddService(root, "tsvc", "", nil)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := a.DoSync(svcID); err != nil {
 		t.Fatal(err)
 	}
 	return a, svcID
