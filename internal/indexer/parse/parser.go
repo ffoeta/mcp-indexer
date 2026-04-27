@@ -7,30 +7,84 @@ type Parser interface {
 	Parse(absPath string) (*ParseResult, error)
 }
 
+// SyntheticModuleName — имя synthetic method, к которому атрибутируются
+// module-level вызовы Python и top-level скрипт-кода других динамических языков.
+const SyntheticModuleName = "<module>"
+
+// SyntheticInitName — имя synthetic method для атрибуции вызовов из
+// field-initializer-ов, static-инициализаторов и instance-блоков Java/JVM.
+// FQN такого узла = <classFQN>.<init>.
+const SyntheticInitName = "<init>"
+
 // ParseResult — результат парсинга файла.
 type ParseResult struct {
-	Imports []string
-	Symbols []SymbolDef
-	Calls   []CallRef
+	Package  string       // объявленный пакет/модуль (java: "com.x.svc"; py: "" — вычисляется в engine)
+	Imports  []ImportRef
+	Objects  []ObjectDef
+	Methods  []MethodDef  // включая synthetic <module> для динамических языков
+	Calls    []CallRef
+	VarTypes []VarType    // для Pass 2 резолюции
 }
 
-// CallRef — вызов функции/конструктора внутри файла.
-type CallRef struct {
-	Caller string // qualified name вызывающего символа (пусто = уровень файла)
-	Line   int    // строка вызова
-	Module string // резолвится в модуль (e.g. "os.path") — для symbols_used.json
-	Local  string // резолвится в локальный символ того же файла — для calls edges
+// ImportRef — одна строчка import.
+type ImportRef struct {
+	Raw   string // "os.path", "com.x.OrderRepo", "./utils"
+	Alias string // alias для importMap; для default import == последняя часть Raw
 }
 
-// SymbolDef описывает символ верхнего уровня или метод.
-type SymbolDef struct {
-	Kind      string   // "class", "function", "method"
+// ObjectDef — class / interface / enum / struct / trait.
+type ObjectDef struct {
 	Name      string
-	Qualified string   // e.g. "ClassName.method_name"
-	Parent    string   // qualified name родительского класса (для методов)
+	FQN       string    // canonical, package-aware
+	Subkind   string    // class|interface|enum|struct|trait
+	Bases     []BaseRef
+	Doc       string    // первая строка docstring/Javadoc/JSDoc, обрезка ≤120 chars
 	StartLine int
 	EndLine   int
-	Bases     []string // только для class
+}
+
+// BaseRef — ссылка на базовый объект (extends/implements).
+type BaseRef struct {
+	Name     string // как написано в коде
+	Relation string // RelExtends | RelImplements (см. store.RelExtends/Implements)
+}
+
+// MethodDef — функция или метод.
+type MethodDef struct {
+	Name      string
+	FQN       string
+	OwnerFQN  string // "" для свободной функции / synthetic <module>
+	Subkind   string // fn|method|ctor|module
+	Scope     string // global|local|member  (см. store.ScopeGlobal/Local/Member)
+	Signature string
+	Doc       string
+	StartLine int
+	EndLine   int
+}
+
+// CallRef — место вызова.
+//
+// CallerFQN — обязательное поле: указывает, какому method-у принадлежит вызов.
+// Для top-level/module-level кода — synthetic <module>.
+//
+// CalleeOwner — receiver / module / класс, как видит парсер:
+//
+//	"" для bare-call (foo()),
+//	"os.path" для атрибут-цепочки,
+//	"OrderRepo" для имени-объекта (резолвится через VarTypes/Imports в Pass 2).
+type CallRef struct {
+	CallerFQN   string
+	CalleeName  string
+	CalleeOwner string
+	Line        int
+}
+
+// VarType — статически выводимое соответствие переменная→тип в локальной scope.
+// Используется в Pass 2 для резолюции вызовов вида "var.method()".
+type VarType struct {
+	ScopeFQN string // FQN метода/функции, в которой видно переменную; "" для file-scope
+	VarName  string
+	TypeName string // simple type name из source; в Pass 2 матчится через importMap
 }
 
 // ParseError — ошибка с позицией (SyntaxError и т.д.).

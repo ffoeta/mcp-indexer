@@ -6,12 +6,15 @@ import (
 	"mcp-indexer/internal/app"
 	"mcp-indexer/internal/common/services"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
+
+// ───────── helpers ─────────
 
 func makeTestApp(t *testing.T) *app.App {
 	t.Helper()
@@ -24,80 +27,14 @@ func makeTestApp(t *testing.T) *app.App {
 	return app.NewFromRegistry(reg)
 }
 
-// N1: Register_NoPanic
-func TestRegister_NoPanic(t *testing.T) {
+func makeServer(t *testing.T) (*server.MCPServer, *app.App) {
+	t.Helper()
 	srv := server.NewMCPServer("test", "0.0.1")
 	a := makeTestApp(t)
-	Register(srv, a) // must not panic
+	Register(srv, a)
+	return srv, a
 }
 
-// N2: jsonResult_ProducesTextResult
-func TestJsonResult_ProducesTextResult(t *testing.T) {
-	result, err := jsonResult(map[string]string{"key": "value"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if len(result.Content) == 0 {
-		t.Fatal("expected content")
-	}
-	text, ok := result.Content[0].(mcpgo.TextContent)
-	if !ok {
-		t.Fatalf("expected TextContent, got %T", result.Content[0])
-	}
-	var m map[string]string
-	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
-		t.Fatalf("result not valid JSON: %v", err)
-	}
-	if m["key"] != "value" {
-		t.Errorf("unexpected content: %q", text.Text)
-	}
-}
-
-// N3: errResult_ProducesErrorResult
-func TestErrResult_ProducesErrorResult(t *testing.T) {
-	result := errResult(errMsg("something went wrong"))
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-	if !result.IsError {
-		t.Error("expected IsError=true")
-	}
-	if len(result.Content) == 0 {
-		t.Fatal("expected content in error result")
-	}
-	text, ok := result.Content[0].(mcpgo.TextContent)
-	if !ok {
-		t.Fatalf("expected TextContent in error, got %T", result.Content[0])
-	}
-	if !strings.Contains(text.Text, "something went wrong") {
-		t.Errorf("error message not in result: %q", text.Text)
-	}
-}
-
-// N4: jsonResult_List_IsValidJSON
-func TestJsonResult_List_IsValidJSON(t *testing.T) {
-	result, err := jsonResult([]string{"a", "b", "c"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, ok := result.Content[0].(mcpgo.TextContent)
-	if !ok {
-		t.Fatal("expected TextContent")
-	}
-	var list []string
-	if err := json.Unmarshal([]byte(text.Text), &list); err != nil {
-		t.Fatalf("result not valid JSON array: %v", err)
-	}
-	if len(list) != 3 {
-		t.Errorf("expected 3 items, got %d", len(list))
-	}
-}
-
-// callTool invokes a registered tool via HandleMessage and returns the CallToolResult.
-// Fails the test on RPC-level errors (tool not found, protocol errors).
 func callTool(t *testing.T, srv *server.MCPServer, name string, args map[string]interface{}) *mcpgo.CallToolResult {
 	t.Helper()
 	raw, err := json.Marshal(map[string]any{
@@ -128,76 +65,89 @@ func callTool(t *testing.T, srv *server.MCPServer, name string, args map[string]
 	return nil
 }
 
-// N5: DebugConfigGet_ReturnsConfigPath
-func TestDebugConfigGet_ReturnsConfigPath(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
-	home := services.AppHome()
-
-	result := callTool(t, srv, "debug_get_config", nil)
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
+func extractText(t *testing.T, r *mcpgo.CallToolResult) string {
+	t.Helper()
+	if len(r.Content) == 0 {
+		t.Fatal("empty content")
 	}
-	text, ok := result.Content[0].(mcpgo.TextContent)
+	tc, ok := r.Content[0].(mcpgo.TextContent)
 	if !ok {
-		t.Fatalf("expected TextContent, got %T", result.Content[0])
+		t.Fatalf("expected TextContent, got %T", r.Content[0])
+	}
+	return tc.Text
+}
+
+func registerSimpleService(t *testing.T, a *app.App, svcID string, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	for rel, content := range files {
+		p := filepath.Join(root, rel)
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		os.WriteFile(p, []byte(content), 0o644)
+	}
+	id, err := a.AddService(root, svcID, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// ───────── infra tests ─────────
+
+func TestRegister_NoPanic(t *testing.T) {
+	srv, _ := makeServer(t)
+	_ = srv
+}
+
+func TestJsonResult_ProducesTextResult(t *testing.T) {
+	result, err := jsonResult(map[string]string{"key": "value"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil")
+	}
+	tc, ok := result.Content[0].(mcpgo.TextContent)
+	if !ok {
+		t.Fatalf("type=%T", result.Content[0])
 	}
 	var m map[string]string
-	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if m["configPath"] != home {
-		t.Errorf("expected configPath=%q, got %q", home, m["configPath"])
+	if err := json.Unmarshal([]byte(tc.Text), &m); err != nil || m["key"] != "value" {
+		t.Errorf("bad result: %q (err=%v)", tc.Text, err)
 	}
 }
 
-// N6: SymbolFullGet_UnknownService_ReturnsError
-func TestSymbolFullGet_UnknownService_ReturnsError(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
-
-	result := callTool(t, srv, "get_symbol_full", map[string]interface{}{
-		"serviceId": "ghost",
-		"symbolId":  "s:py:Foo:a.py:1",
-	})
+func TestErrResult_ProducesErrorResult(t *testing.T) {
+	result := errResult(errMsg("boom"))
 	if !result.IsError {
-		t.Error("expected error result for unknown service")
+		t.Error("IsError must be true")
+	}
+	if !strings.Contains(extractText(t, result), "boom") {
+		t.Errorf("error text missing")
 	}
 }
 
-// N7: Help_ReturnsValidJSON
-func TestHelp_ReturnsValidJSON(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
+// ───────── services / add / update / sync ─────────
 
-	result := callTool(t, srv, "help", nil)
+func TestServices_ReturnsList(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc1", map[string]string{"x.py": "class X: pass\n"})
+
+	result := callTool(t, srv, "services", nil)
 	if result.IsError {
-		t.Fatalf("unexpected error from help: %v", result.Content)
+		t.Fatal(extractText(t, result))
 	}
-	text, ok := result.Content[0].(mcpgo.TextContent)
-	if !ok {
-		t.Fatalf("expected TextContent, got %T", result.Content[0])
+	var arr []map[string]any
+	if err := json.Unmarshal([]byte(extractText(t, result)), &arr); err != nil {
+		t.Fatal(err)
 	}
-	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
-		t.Fatalf("help result is not valid JSON: %v", err)
-	}
-	if m["server"] == nil {
-		t.Error("expected 'server' field in help result")
-	}
-	if m["tools"] == nil {
-		t.Error("expected 'tools' field in help result")
+	if len(arr) != 1 || arr[0]["id"] != "svc1" {
+		t.Errorf("bad services list: %+v", arr)
 	}
 }
 
-// N8: ServiceAdd_WithMeta_PersistsMeta
-func TestServiceAdd_WithMeta_PersistsMeta(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
+func TestAddService_PersistsMeta(t *testing.T) {
+	srv, a := makeServer(t)
 	root := t.TempDir()
 
 	result := callTool(t, srv, "add_service", map[string]interface{}{
@@ -207,158 +157,252 @@ func TestServiceAdd_WithMeta_PersistsMeta(t *testing.T) {
 		"mainEntities": `["order","supplier"]`,
 	})
 	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
+		t.Fatal(extractText(t, result))
 	}
-
 	entry, ok := a.Registry.Get("meta-test")
 	if !ok {
-		t.Fatal("service not registered")
+		t.Fatal("not registered")
 	}
-	if entry.Description != "test service" {
-		t.Errorf("description not saved: %q", entry.Description)
-	}
-	if len(entry.MainEntities) != 2 || entry.MainEntities[0] != "order" {
-		t.Errorf("mainEntities not saved: %v", entry.MainEntities)
+	if entry.Description != "test service" || len(entry.MainEntities) != 2 {
+		t.Errorf("meta not saved: %+v", entry)
 	}
 }
 
-// N9: ServiceMetaUpdate_UpdatesFields
-func TestServiceMetaUpdate_UpdatesFields(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
-	root := t.TempDir()
-
-	// Register service first
-	callTool(t, srv, "add_service", map[string]interface{}{
-		"rootAbs":   root,
-		"serviceId": "upd-test",
-	})
+func TestUpdateMeta_BadJSON_ReturnsError(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{"x.py": "x = 1\n"})
 
 	result := callTool(t, srv, "update_service_meta", map[string]interface{}{
-		"serviceId":    "upd-test",
-		"description":  "new description",
-		"mainEntities": `["entity1"]`,
-	})
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
-	}
-
-	entry, ok := a.Registry.Get("upd-test")
-	if !ok {
-		t.Fatal("service not found")
-	}
-	if entry.Description != "new description" {
-		t.Errorf("description not updated: %q", entry.Description)
-	}
-}
-
-// N10: ServiceMetaUpdate_InvalidMainEntities_ReturnsError
-func TestServiceMetaUpdate_InvalidMainEntities_ReturnsError(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
-	root := t.TempDir()
-
-	callTool(t, srv, "add_service", map[string]interface{}{
-		"rootAbs":   root,
-		"serviceId": "bad-entities",
-	})
-
-	result := callTool(t, srv, "update_service_meta", map[string]interface{}{
-		"serviceId":    "bad-entities",
-		"mainEntities": `not-json`,
+		"serviceId":    "svc",
+		"mainEntities": "not-json",
 	})
 	if !result.IsError {
-		t.Error("expected error for invalid mainEntities JSON")
+		t.Error("expected error for bad JSON")
 	}
 }
 
-// N11: ServiceListGet_ReturnsIdToRootAbs
-func TestServiceListGet_ReturnsIdToRootAbs(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
-	root := t.TempDir()
-
-	callTool(t, srv, "add_service", map[string]interface{}{
-		"rootAbs":     root,
-		"serviceId":   "list-test",
-		"description": "should not appear in list",
-	})
-
-	result := callTool(t, srv, "get_service_list", nil)
-	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
-	}
-	text, ok := result.Content[0].(mcpgo.TextContent)
-	if !ok {
-		t.Fatal("expected TextContent")
-	}
-	var m map[string]string
-	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	rootAbs, ok := m["list-test"]
-	if !ok {
-		t.Fatal("list-test not in service list")
-	}
-	if rootAbs == "" {
-		t.Error("rootAbs must not be empty")
+func TestSync_UnknownService_ReturnsError(t *testing.T) {
+	srv, _ := makeServer(t)
+	result := callTool(t, srv, "sync", map[string]interface{}{"serviceId": "ghost"})
+	if !result.IsError {
+		t.Error("expected error for ghost service")
 	}
 }
 
-// N12: ServiceInfoGet_ReturnsFullMeta
-func TestServiceInfoGet_ReturnsFullMeta(t *testing.T) {
-	srv := server.NewMCPServer("test", "0.0.1")
-	a := makeTestApp(t)
-	Register(srv, a)
-	root := t.TempDir()
+// ───────── stats ─────────
 
-	callTool(t, srv, "add_service", map[string]interface{}{
-		"rootAbs":      root,
-		"serviceId":    "info-full",
-		"description":  "full info test",
-		"mainEntities": `["entity1","entity2"]`,
+func TestStats_NonZero(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{"x.py": "class Foo:\n    def m(self): pass\n"})
+
+	result := callTool(t, srv, "stats", map[string]interface{}{"serviceId": "svc"})
+	if result.IsError {
+		t.Fatal(extractText(t, result))
+	}
+	var m map[string]int
+	json.Unmarshal([]byte(extractText(t, result)), &m)
+	if m["files"] == 0 || m["objects"] == 0 || m["methods"] == 0 {
+		t.Errorf("stats zero: %+v", m)
+	}
+}
+
+// ───────── search / peek / walk / file / code ─────────
+
+func TestSearch_FindsObjectByShortID(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{
+		"svc.py": "class OrderService:\n    def run(self): pass\n",
 	})
 
-	result := callTool(t, srv, "get_service_meta", map[string]interface{}{
-		"serviceId": "info-full",
+	result := callTool(t, srv, "search", map[string]interface{}{
+		"serviceId": "svc",
+		"query":     "order",
 	})
 	if result.IsError {
-		t.Fatalf("unexpected error: %v", result.Content)
+		t.Fatal(extractText(t, result))
 	}
-	text, ok := result.Content[0].(mcpgo.TextContent)
-	if !ok {
-		t.Fatal("expected TextContent")
+	var resp struct {
+		Hits []struct {
+			ID   string `json:"id"`
+			K    string `json:"k"`
+			Name string `json:"name"`
+		} `json:"hits"`
+	}
+	json.Unmarshal([]byte(extractText(t, result)), &resp)
+	if len(resp.Hits) == 0 {
+		t.Fatal("no hits")
+	}
+	hasObj := false
+	for _, h := range resp.Hits {
+		if h.K == "object" && h.Name == "OrderService" {
+			if !strings.HasPrefix(h.ID, "o") {
+				t.Errorf("expected short id prefix 'o', got %q", h.ID)
+			}
+			hasObj = true
+		}
+	}
+	if !hasObj {
+		t.Errorf("OrderService not in hits: %+v", resp.Hits)
+	}
+}
+
+func TestPeek_ObjectIncludesMethods(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{
+		"svc.py": "class Service:\n    def a(self): pass\n    def b(self): pass\n",
+	})
+	// Найдём short_id Service через search.
+	res := callTool(t, srv, "search", map[string]interface{}{"serviceId": "svc", "query": "service", "kind": "object"})
+	var search struct {
+		Hits []struct{ ID string }
+	}
+	json.Unmarshal([]byte(extractText(t, res)), &search)
+	if len(search.Hits) == 0 {
+		t.Fatal("no service hit")
+	}
+	objID := search.Hits[0].ID
+
+	pk := callTool(t, srv, "peek", map[string]interface{}{"serviceId": "svc", "id": objID})
+	if pk.IsError {
+		t.Fatal(extractText(t, pk))
+	}
+	var obj map[string]interface{}
+	json.Unmarshal([]byte(extractText(t, pk)), &obj)
+	if obj["k"] != "object" {
+		t.Errorf("k=%v, want object", obj["k"])
+	}
+	methods, _ := obj["methods"].([]interface{})
+	if len(methods) != 2 {
+		t.Errorf("expected 2 methods, got %v", methods)
+	}
+}
+
+func TestPeek_MethodCounts(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{
+		"x.py": `
+def helper():
+    pass
+
+def main():
+    helper()
+`,
+	})
+	res := callTool(t, srv, "search", map[string]interface{}{"serviceId": "svc", "query": "helper", "kind": "method"})
+	var search struct {
+		Hits []struct{ ID, Name string }
+	}
+	json.Unmarshal([]byte(extractText(t, res)), &search)
+	var helperID string
+	for _, h := range search.Hits {
+		if h.Name == "helper" {
+			helperID = h.ID
+			break
+		}
+	}
+	if helperID == "" {
+		t.Fatal("helper not found")
+	}
+	pk := callTool(t, srv, "peek", map[string]interface{}{"serviceId": "svc", "id": helperID})
+	if pk.IsError {
+		t.Fatal(extractText(t, pk))
 	}
 	var m map[string]interface{}
-	if err := json.Unmarshal([]byte(text.Text), &m); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
-	}
-	if m["description"] != "full info test" {
-		t.Errorf("description not returned by get_service_meta: %v", m["description"])
-	}
-	entities, ok := m["mainEntities"].([]interface{})
-	if !ok || len(entities) != 2 {
-		t.Errorf("mainEntities not returned correctly: %v", m["mainEntities"])
-	}
-	if _, hasConfig := m["config"]; hasConfig {
-		t.Error("config must not be present in get_service_meta — use debug_get_project_config")
+	json.Unmarshal([]byte(extractText(t, pk)), &m)
+	if m["k"] != "method" || m["called_by"] == nil || int(m["called_by"].(float64)) < 1 {
+		t.Errorf("helper.called_by missing or zero: %+v", m)
 	}
 }
 
-// makeTestAppWithService registers one service and returns app + svcID.
-func makeTestAppWithService(t *testing.T) (*app.App, string) {
-	t.Helper()
-	a := makeTestApp(t)
-	root := t.TempDir()
-	os.WriteFile(root+"/foo.py", []byte("class Foo:\n    pass\n"), 0o644)
-	svcID, err := a.AddService(root, "tsvc", "", nil)
-	if err != nil {
-		t.Fatal(err)
+func TestWalk_CallsIn(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{
+		"x.py": "def helper():\n    pass\ndef caller():\n    helper()\n",
+	})
+	res := callTool(t, srv, "search", map[string]interface{}{"serviceId": "svc", "query": "helper", "kind": "method"})
+	var search struct {
+		Hits []struct{ ID, Name string }
 	}
-	return a, svcID
+	json.Unmarshal([]byte(extractText(t, res)), &search)
+	var helperID string
+	for _, h := range search.Hits {
+		if h.Name == "helper" {
+			helperID = h.ID
+		}
+	}
+	w := callTool(t, srv, "walk", map[string]interface{}{
+		"serviceId": "svc", "id": helperID, "edge": "calls", "dir": "in",
+	})
+	if w.IsError {
+		t.Fatal(extractText(t, w))
+	}
+	var resp struct {
+		Items []map[string]interface{}
+		Total int
+	}
+	json.Unmarshal([]byte(extractText(t, w)), &resp)
+	if len(resp.Items) != 1 {
+		t.Errorf("expected 1 in-call, got %+v", resp.Items)
+	}
+}
+
+func TestFile_Overview(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{
+		"main.py": "import os\nclass A: pass\ndef f(): pass\n",
+	})
+	r := callTool(t, srv, "file", map[string]interface{}{"serviceId": "svc", "path": "main.py"})
+	if r.IsError {
+		t.Fatal(extractText(t, r))
+	}
+	var f map[string]interface{}
+	json.Unmarshal([]byte(extractText(t, r)), &f)
+	if f["lang"] != "python" || f["path"] != "main.py" {
+		t.Errorf("bad file overview: %+v", f)
+	}
+	if objs, _ := f["objects"].([]interface{}); len(objs) != 1 {
+		t.Errorf("expected 1 object, got %v", objs)
+	}
+}
+
+func TestCode_ReadsRange(t *testing.T) {
+	srv, a := makeServer(t)
+	registerSimpleService(t, a, "svc", map[string]string{
+		"x.py": "def hello():\n    return 42\n",
+	})
+	res := callTool(t, srv, "search", map[string]interface{}{"serviceId": "svc", "query": "hello", "kind": "method"})
+	var search struct {
+		Hits []struct{ ID, Name string }
+	}
+	json.Unmarshal([]byte(extractText(t, res)), &search)
+	var helloID string
+	for _, h := range search.Hits {
+		if h.Name == "hello" {
+			helloID = h.ID
+		}
+	}
+	r := callTool(t, srv, "code", map[string]interface{}{"serviceId": "svc", "id": helloID})
+	if r.IsError {
+		t.Fatal(extractText(t, r))
+	}
+	var c map[string]interface{}
+	json.Unmarshal([]byte(extractText(t, r)), &c)
+	src, _ := c["src"].(string)
+	if !strings.Contains(src, "return 42") {
+		t.Errorf("src missing body: %q", src)
+	}
+}
+
+// ───────── error paths ─────────
+
+func TestPeek_UnknownService_ReturnsError(t *testing.T) {
+	srv, _ := makeServer(t)
+	result := callTool(t, srv, "peek", map[string]interface{}{
+		"serviceId": "ghost", "id": "m1",
+	})
+	if !result.IsError {
+		t.Error("expected error for unknown service")
+	}
 }
 
 type errMsg string

@@ -10,6 +10,7 @@ Usage: $(basename "$0") <command> [args]
 
 Commands:
   build              Build and install to $BINARY
+  sync <serviceId>   Re-index a service from scratch (wipe + full re-index)
   ui <serviceId>     Start interactive graph viz (default port 8080)
     --port <N>       Override HTTP port
   help               Show this help
@@ -24,6 +25,15 @@ case "$cmd" in
     echo "Building..."
     go build -o "$BINARY" $CMD_PKG
     echo "Installed: $BINARY"
+    ;;
+
+  sync)
+    if [[ $# -eq 0 ]]; then
+      echo "Error: serviceId required" >&2
+      echo "Usage: $(basename "$0") sync <serviceId>" >&2
+      exit 1
+    fi
+    exec "$BINARY" sync "$1"
     ;;
 
   ui)

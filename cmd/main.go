@@ -28,9 +28,13 @@ func rootCmd() *cobra.Command {
 		serveCmd(),
 		listCmd(),
 		addCmd(),
+		syncCmd(),
 		searchCmd(),
-		fileContextCmd(),
-		neighborsCmd(),
+		peekCmd(),
+		walkCmd(),
+		codeCmd(),
+		fileCmd(),
+		statsCmd(),
 		vizCmd(),
 	)
 	return root
@@ -58,14 +62,13 @@ func listCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List registered services",
 		RunE: withApp(func(a *app.App, _ *cobra.Command, _ []string) error {
-			ids := a.ListServicesSorted()
-			if len(ids) == 0 {
+			services := a.ListServices()
+			if len(services) == 0 {
 				fmt.Println("(no services registered)")
 				return nil
 			}
-			for _, id := range ids {
-				entry, _ := a.Registry.Get(id)
-				fmt.Printf("%-20s  %s\n", id, entry.RootAbs)
+			for _, s := range services {
+				fmt.Printf("%-20s  %s\n", s.ID, s.Root)
 			}
 			return nil
 		}),
@@ -76,7 +79,7 @@ func addCmd() *cobra.Command {
 	var svcID, description, mainEntitiesRaw string
 	cmd := &cobra.Command{
 		Use:   "add <rootAbs>",
-		Short: "Register a new service",
+		Short: "Register a new service (and run initial index)",
 		Args:  cobra.ExactArgs(1),
 		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
 			var mainEntities []string
@@ -101,33 +104,48 @@ func addCmd() *cobra.Command {
 	return cmd
 }
 
+func syncCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sync <serviceId>",
+		Short: "Re-index a service from scratch",
+		Args:  cobra.ExactArgs(1),
+		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
+			if err := a.Sync(args[0]); err != nil {
+				return err
+			}
+			fmt.Printf("synced: %s\n", args[0])
+			return nil
+		}),
+	}
+}
+
 func searchCmd() *cobra.Command {
-	var symN, fileN int
+	var kind string
+	var limit int
 	cmd := &cobra.Command{
 		Use:   "search <serviceId> <query>",
-		Short: "Search symbols/files",
+		Short: "FTS5 search for methods/objects/files",
 		Args:  cobra.ExactArgs(2),
 		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
-			limits := app.SearchLimits{Sym: symN, File: fileN}
-			res, err := a.Search(args[0], args[1], limits)
+			res, err := a.Search(args[0], args[1], kind, limit)
 			if err != nil {
 				return err
 			}
 			return printJSON(res)
 		}),
 	}
-	cmd.Flags().IntVar(&symN, "sym", 20, "max symbols (0=skip)")
-	cmd.Flags().IntVar(&fileN, "file", 10, "max files (0=skip)")
+	cmd.Flags().StringVar(&kind, "kind", "", "method | object | file (empty = all)")
+	cmd.Flags().IntVar(&limit, "limit", 10, "max hits")
 	return cmd
 }
 
-func fileContextCmd() *cobra.Command {
+func peekCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "file-context <serviceId> <key>",
-		Short: "Get file context (module, imports, symbols)",
+		Use:   "peek <serviceId> <id>",
+		Short: "Compact summary of node/file by short or canonical id",
 		Args:  cobra.ExactArgs(2),
 		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
-			res, err := a.GetFileContext(args[0], args[1])
+			res, err := a.Peek(args[0], args[1])
 			if err != nil {
 				return err
 			}
@@ -136,28 +154,73 @@ func fileContextCmd() *cobra.Command {
 	}
 }
 
-func neighborsCmd() *cobra.Command {
-	var depth int
-	var edgeTypes string
+func walkCmd() *cobra.Command {
+	var dir string
+	var limit, offset int
 	cmd := &cobra.Command{
-		Use:   "neighbors <serviceId> <nodeId>",
-		Short: "BFS neighbors in the graph",
-		Args:  cobra.ExactArgs(2),
+		Use:   "walk <serviceId> <id> <edge>",
+		Short: "Walk graph edges around id. edge: calls|inherits|imports|defines",
+		Args:  cobra.ExactArgs(3),
 		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
-			var et []string
-			if edgeTypes != "" {
-				et = strings.Split(edgeTypes, ",")
-			}
-			res, err := a.GetNeighbors(args[0], args[1], depth, et)
+			res, err := a.Walk(args[0], args[1], args[2], dir, limit, offset)
 			if err != nil {
 				return err
 			}
 			return printJSON(res)
 		}),
 	}
-	cmd.Flags().IntVar(&depth, "depth", 2, "BFS depth")
-	cmd.Flags().StringVar(&edgeTypes, "edge-types", "", "comma-separated edge types")
+	cmd.Flags().StringVar(&dir, "dir", "both", "in | out | both")
+	cmd.Flags().IntVar(&limit, "limit", 20, "max items")
+	cmd.Flags().IntVar(&offset, "offset", 0, "offset")
 	return cmd
+}
+
+func codeCmd() *cobra.Command {
+	var ctx int
+	cmd := &cobra.Command{
+		Use:   "code <serviceId> <id>",
+		Short: "Source code of a node (method/object)",
+		Args:  cobra.ExactArgs(2),
+		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
+			res, err := a.Code(args[0], args[1], ctx)
+			if err != nil {
+				return err
+			}
+			return printJSON(res)
+		}),
+	}
+	cmd.Flags().IntVar(&ctx, "ctx", 0, "extra lines around range")
+	return cmd
+}
+
+func fileCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "file <serviceId> <path>",
+		Short: "File overview: imports, objects, top-level methods",
+		Args:  cobra.ExactArgs(2),
+		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
+			res, err := a.File(args[0], args[1])
+			if err != nil {
+				return err
+			}
+			return printJSON(res)
+		}),
+	}
+}
+
+func statsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stats <serviceId>",
+		Short: "Index counters",
+		Args:  cobra.ExactArgs(1),
+		RunE: withApp(func(a *app.App, _ *cobra.Command, args []string) error {
+			res, err := a.Stats(args[0])
+			if err != nil {
+				return err
+			}
+			return printJSON(res)
+		}),
+	}
 }
 
 type appFn func(a *app.App, cmd *cobra.Command, args []string) error

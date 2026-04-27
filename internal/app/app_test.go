@@ -114,12 +114,8 @@ func TestApp_GetServiceInfo_Found(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, ok := info.(map[string]interface{})
-	if !ok {
-		t.Fatalf("expected map, got %T", info)
-	}
-	if m["serviceId"] != svcID {
-		t.Errorf("expected serviceId=%q, got %v", svcID, m["serviceId"])
+	if info.ID != svcID {
+		t.Errorf("expected id=%q, got %q", svcID, info.ID)
 	}
 }
 
@@ -155,15 +151,15 @@ func TestApp_ListServicesSorted(t *testing.T) {
 }
 
 
-// A17: App_GetSymbolFull_UnknownSymbol_Errors
-func TestApp_GetSymbolFull_UnknownSymbol_Errors(t *testing.T) {
+// A17: App_Peek_UnknownID_Errors
+func TestApp_Peek_UnknownID_Errors(t *testing.T) {
 	a := setupApp(t)
 	root := t.TempDir()
 	svcID, _ := a.AddService(root, "fsvc2", "", nil)
 
-	_, err := a.GetSymbolFull(svcID, "s:py:Ghost:x.py:0", 1)
+	_, err := a.Peek(svcID, "m99999")
 	if err == nil {
-		t.Error("expected error for unknown symbol")
+		t.Error("expected error for unknown id")
 	}
 }
 

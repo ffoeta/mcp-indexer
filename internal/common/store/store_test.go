@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// H1: Store_Open_CreatesDB
 func TestStore_Open_CreatesDB(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s, err := Open(path)
@@ -19,7 +18,6 @@ func TestStore_Open_CreatesDB(t *testing.T) {
 	}
 }
 
-// H2: Store_Open_IdempotentDDL
 func TestStore_Open_IdempotentDDL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")
 	s, err := Open(path)
@@ -35,14 +33,8 @@ func TestStore_Open_IdempotentDDL(t *testing.T) {
 	s2.Close()
 }
 
-// H3: Store_WAL_Mode
 func TestStore_WAL_Mode(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-
+	s := openTestStore(t)
 	var mode string
 	if err := s.DB().QueryRow(`PRAGMA journal_mode`).Scan(&mode); err != nil {
 		t.Fatal(err)
@@ -52,14 +44,8 @@ func TestStore_WAL_Mode(t *testing.T) {
 	}
 }
 
-// H4: Store_ForeignKeys_On
 func TestStore_ForeignKeys_On(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-
+	s := openTestStore(t)
 	var fk int
 	if err := s.DB().QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil {
 		t.Fatal(err)
@@ -69,19 +55,20 @@ func TestStore_ForeignKeys_On(t *testing.T) {
 	}
 }
 
-// H5: Store_Tables_AllExist
 func TestStore_Tables_AllExist(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
+	s := openTestStore(t)
+	tables := []string{
+		"files",
+		"nodes",
+		"edges_calls",
+		"edges_inherits",
+		"edges_imports",
+		"search_idx",
 	}
-	defer s.Close()
-
-	tables := []string{"files", "symbols", "imports", "edges", "term_postings"}
 	for _, tbl := range tables {
 		var name string
 		err := s.DB().QueryRow(
-			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tbl,
+			`SELECT name FROM sqlite_master WHERE name=?`, tbl,
 		).Scan(&name)
 		if err != nil {
 			t.Errorf("table %q not found: %v", tbl, err)
@@ -89,19 +76,27 @@ func TestStore_Tables_AllExist(t *testing.T) {
 	}
 }
 
-// H6: Store_Begin_Rollback_NoLeaks
-func TestStore_Begin_Rollback_NoLeaks(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
+func TestStore_LegacyTables_Dropped(t *testing.T) {
+	s := openTestStore(t)
+	legacy := []string{"symbols", "imports", "edges", "term_postings", "modules"}
+	for _, tbl := range legacy {
+		var name string
+		err := s.DB().QueryRow(
+			`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tbl,
+		).Scan(&name)
+		if err == nil {
+			t.Errorf("legacy table %q should be dropped, but exists", tbl)
+		}
 	}
-	defer s.Close()
+}
 
+func TestStore_Begin_Rollback_NoLeaks(t *testing.T) {
+	s := openTestStore(t)
 	tx, err := s.Begin()
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx.Exec(`INSERT INTO files(file_id,key,rel_path,lang,hash) VALUES('f:x','x','x','go','b3:aa')`)
+	mkFile(t, tx, 1, "x.py", "python")
 	tx.Rollback()
 
 	var n int
@@ -111,36 +106,6 @@ func TestStore_Begin_Rollback_NoLeaks(t *testing.T) {
 	}
 }
 
-// H7: Store_UpsertFile_And_Query
-func TestStore_UpsertFile_And_Query(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer s.Close()
-
-	tx, err := s.Begin()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := UpsertFile(tx, FileRow{
-		FileID: "f:a.py", Key: "a.py", RelPath: "a.py", Lang: "python", Hash: "b3:cafe",
-	}); err != nil {
-		tx.Rollback()
-		t.Fatal(err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
-	}
-
-	var hash string
-	s.DB().QueryRow(`SELECT hash FROM files WHERE key='a.py'`).Scan(&hash)
-	if hash != "b3:cafe" {
-		t.Errorf("expected hash b3:cafe, got %q", hash)
-	}
-}
-
-// H8: Store_CreatesMissingDir
 func TestStore_CreatesMissingDir(t *testing.T) {
 	nested := filepath.Join(t.TempDir(), "a", "b", "c", "test.db")
 	s, err := Open(nested)

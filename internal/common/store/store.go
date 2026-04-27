@@ -13,6 +13,16 @@ import (
 //go:embed ddl.sql
 var ddlSQL string
 
+// dropLegacy сбрасывает таблицы старой схемы, если они существуют.
+// Никакой обратной совместимости — full reindex после миграции.
+const dropLegacy = `
+DROP TABLE IF EXISTS term_postings;
+DROP TABLE IF EXISTS edges;
+DROP TABLE IF EXISTS imports;
+DROP TABLE IF EXISTS symbols;
+DROP TABLE IF EXISTS modules;
+`
+
 // Store управляет SQLite-базой одного сервиса.
 type Store struct {
 	db *sql.DB
@@ -27,13 +37,15 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
 	}
 	db.SetMaxOpenConns(1)
+
+	if _, err := db.Exec(dropLegacy); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("drop legacy schema: %w", err)
+	}
 	if _, err := db.Exec(ddlSQL); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init DDL: %w", err)
 	}
-	// Migration: drop legacy modules table and module_id column
-	db.Exec(`DROP TABLE IF EXISTS modules`)                              //nolint:errcheck
-	db.Exec(`ALTER TABLE files DROP COLUMN IF EXISTS module_id`)        //nolint:errcheck
 	return &Store{db: db}, nil
 }
 

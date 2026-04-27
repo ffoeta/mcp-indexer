@@ -1,8 +1,5 @@
 package store
 
-// Test helpers that mirror testutil but live here to avoid import cycle.
-// (testutil imports sqlite, so sqlite_test cannot import testutil.)
-
 import (
 	"database/sql"
 	"path/filepath"
@@ -19,49 +16,41 @@ func openTestStore(t *testing.T) *Store {
 	return s
 }
 
-func insertFile(t *testing.T, tx *sql.Tx, key, lang string) string {
+// mkFile вставляет файл с минимальными полями. Возвращает FileID.
+func mkFile(t *testing.T, tx *sql.Tx, shortID int64, key, lang string) string {
 	t.Helper()
-	fileID := FileID(key)
-	_, err := tx.Exec(
-		`INSERT INTO files(file_id, key, rel_path, lang, hash) VALUES(?,?,?,?,?)`,
-		fileID, key, key, lang, "b3:aabb",
-	)
-	if err != nil {
-		t.Fatalf("insertFile %q: %v", key, err)
+	row := FileRow{
+		FileID:  FileID(key),
+		ShortID: shortID,
+		Key:     key,
+		RelPath: key,
+		Lang:    lang,
+		Hash:    "b3:aabb",
 	}
-	return fileID
+	if err := InsertFile(tx, row); err != nil {
+		t.Fatalf("InsertFile %q: %v", key, err)
+	}
+	return row.FileID
 }
 
-func insertSymbol(t *testing.T, tx *sql.Tx, symID, fileID, kind, name string) {
+// mkNode вставляет ноду. Возвращает NodeID.
+func mkNode(t *testing.T, tx *sql.Tx, shortID int64, fileID, kind, subkind, fqn string, line int) string {
 	t.Helper()
-	_, err := tx.Exec(
-		`INSERT INTO symbols(symbol_id, file_id, kind, name, qualified, start_line, end_line)
-		 VALUES(?,?,?,?,?,1,10)`,
-		symID, fileID, kind, name, name,
-	)
-	if err != nil {
-		t.Fatalf("insertSymbol %q: %v", symID, err)
+	nid := NodeID("python", kind, fqn, fileID, line)
+	row := NodeRow{
+		NodeID:    nid,
+		ShortID:   shortID,
+		FileID:    fileID,
+		Kind:      kind,
+		Subkind:   subkind,
+		Name:      fqn,
+		FQN:       fqn,
+		Scope:     ScopeGlobal,
+		StartLine: line,
+		EndLine:   line + 5,
 	}
-}
-
-func insertEdge(t *testing.T, tx *sql.Tx, typ, from, to string) {
-	t.Helper()
-	_, err := tx.Exec(
-		`INSERT INTO edges(type, from_id, to_id, confidence) VALUES(?,?,?,100)`,
-		typ, from, to,
-	)
-	if err != nil {
-		t.Fatalf("insertEdge %q->%q: %v", from, to, err)
+	if err := InsertNode(tx, row); err != nil {
+		t.Fatalf("InsertNode %q: %v", fqn, err)
 	}
-}
-
-func insertPosting(t *testing.T, tx *sql.Tx, term, docID string, weight float64) {
-	t.Helper()
-	_, err := tx.Exec(
-		`INSERT INTO term_postings(term, doc_id, weight) VALUES(?,?,?)`,
-		term, docID, weight,
-	)
-	if err != nil {
-		t.Fatalf("insertPosting %q: %v", term, err)
-	}
+	return nid
 }

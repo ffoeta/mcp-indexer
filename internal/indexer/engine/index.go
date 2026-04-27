@@ -1,3 +1,5 @@
+// Package engine реализует полную индексацию проекта:
+// scan → parse (Collect) → 3-pass резолюция (Resolve) → запись в SQLite + FTS5.
 package engine
 
 import (
@@ -9,8 +11,11 @@ import (
 	"mcp-indexer/internal/indexer/parse"
 )
 
-// Index выполняет полную индексацию сервиса:
-// WipeAll → Phase1 (Collect) → Phase2 (Resolve) → write to DB.
+// Index выполняет полную переиндексацию сервиса.
+//   - WipeAll → очищаем индекс (full reindex, без incremental)
+//   - Collect → parse + canonical FQN + maps
+//   - Resolve → 3-pass резолюция вызовов, inherits, imports
+//   - Write   → одной транзакцией пишем files/nodes/edges_*/search_idx
 func Index(
 	db *sql.DB,
 	rootAbs string,
@@ -20,52 +25,69 @@ func Index(
 	norm *tokenize.Normalizer,
 	svcDir string,
 ) error {
-	// Очищаем индекс перед переиндексацией
+	_ = svcDir // ранее использовался для symbols_defined.json; больше не пишем
+
 	if err := store.WipeAll(db); err != nil {
-		return fmt.Errorf("wipe index: %w", err)
+		return fmt.Errorf("wipe: %w", err)
 	}
 
-	// Phase 1: collect
-	cr, err := Collect(rootAbs, cfg, matcher, parsers, svcDir)
+	cr, err := Collect(rootAbs, cfg, matcher, parsers)
 	if err != nil {
 		return fmt.Errorf("collect: %w", err)
 	}
 
-	// Phase 2: resolve
 	rr := Resolve(cr, norm)
 
-	// Записываем в БД одной транзакцией
 	tx, err := db.Begin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck
 
-	for _, row := range rr.Files {
-		if err := store.UpsertFile(tx, row); err != nil {
-			return fmt.Errorf("upsert file %s: %w", row.Key, err)
+	for _, f := range rr.Files {
+		if err := store.InsertFile(tx, f); err != nil {
+			return err
 		}
 	}
-
-	for _, row := range rr.Symbols {
-		if err := store.InsertSymbol(tx, row); err != nil {
-			return fmt.Errorf("insert symbol %s: %w", row.Name, err)
+	// Сначала objects (на них ссылаются methods через owner_id).
+	for _, n := range rr.Nodes {
+		if n.Kind != store.KindObject {
+			continue
+		}
+		if err := store.InsertNode(tx, n); err != nil {
+			return err
 		}
 	}
-
-	if err := store.InsertImports(tx, rr.Imports); err != nil {
-		return fmt.Errorf("insert imports: %w", err)
-	}
-
-	for _, row := range rr.Edges {
-		if err := store.InsertEdge(tx, row); err != nil {
-			return fmt.Errorf("insert edge %s %s→%s: %w", row.Type, row.FromID, row.ToID, err)
+	for _, n := range rr.Nodes {
+		if n.Kind != store.KindMethod {
+			continue
+		}
+		if err := store.InsertNode(tx, n); err != nil {
+			return err
 		}
 	}
-
-	if err := store.InsertTermPostings(tx, rr.Postings); err != nil {
-		return fmt.Errorf("insert postings: %w", err)
+	for _, e := range rr.Calls {
+		if err := store.InsertCallEdge(tx, e); err != nil {
+			return err
+		}
 	}
-
+	for _, e := range rr.Inherits {
+		if err := store.InsertInheritEdge(tx, e); err != nil {
+			return err
+		}
+	}
+	for _, e := range rr.Imports {
+		if err := store.InsertImportEdge(tx, e); err != nil {
+			return err
+		}
+	}
+	for _, d := range rr.FTSDocs {
+		if err := store.InsertSearchDoc(tx, d); err != nil {
+			return err
+		}
+	}
+	if err := store.OptimizeFTS(tx); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

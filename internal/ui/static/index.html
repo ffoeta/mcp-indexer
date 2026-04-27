@@ -2,427 +2,859 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>mcp-indexer graph</title>
+<title>mcp-indexer · ui</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0d1117; color: #c9d1d9; display: flex; height: 100vh; overflow: hidden; }
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #21262d;
+    --border: #30363d;
+    --muted: #8b949e;
+    --fg: #c9d1d9;
+    --accent: #58a6ff;
+    --accent2: #1f6feb;
+    --green: #3fb950;
+    --orange: #f78166;
+    --yellow: #d29922;
+    --purple: #bc8cff;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+    background: var(--bg); color: var(--fg);
+    font-size: 13px; line-height: 1.5;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
 
-/* ---- sidebar ---- */
-#sidebar {
-  width: 270px; min-width: 220px; background: #161b22;
-  border-right: 1px solid #30363d; display: flex; flex-direction: column; z-index: 10;
-}
-#sidebar h1 { font-size: 12px; padding: 10px 14px; border-bottom: 1px solid #30363d; color: #8b949e; letter-spacing: .05em; text-transform: uppercase; }
+  /* ---- header ---- */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 8px 14px; background: var(--bg2); border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  header .title { font-size: 13px; color: var(--accent); font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 11px; }
+  header .meta b { color: var(--fg); font-weight: normal; }
+  .tabs { margin-left: auto; display: flex; gap: 4px; }
+  .tab {
+    padding: 5px 12px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--bg); color: var(--muted); cursor: pointer;
+    font-family: inherit; font-size: 11px;
+  }
+  .tab:hover { color: var(--fg); border-color: var(--muted); }
+  .tab.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
 
-/* source controls */
-#controls { padding: 10px 14px; border-bottom: 1px solid #30363d; }
-#mode-tabs { display: flex; gap: 5px; margin-bottom: 10px; }
-.tab { flex: 1; padding: 4px 0; font-size: 11px; border: 1px solid #30363d; background: #0d1117; color: #8b949e; border-radius: 4px; cursor: pointer; text-align: center; }
-.tab.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-#node-controls { display: none; flex-direction: column; gap: 7px; }
-#node-controls.visible { display: flex; }
-label.small { font-size: 11px; color: #8b949e; display: block; margin-bottom: 3px; }
-#node-input { width: 100%; padding: 4px 7px; font-size: 11px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-family: inherit; }
-#node-input:focus { outline: none; border-color: #1f6feb; }
-.depth-row { display: flex; align-items: center; gap: 7px; }
-#depth-val { font-size: 11px; color: #58a6ff; min-width: 14px; text-align: right; }
-#depth-slider { flex: 1; accent-color: #1f6feb; }
-#load-btn { width: 100%; padding: 5px; font-size: 11px; background: #238636; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-family: inherit; }
-#load-btn:hover { background: #2ea043; }
-#load-btn:disabled { background: #21262d; color: #8b949e; cursor: not-allowed; }
+  /* ---- main ---- */
+  main { flex: 1; min-height: 0; overflow: hidden; display: flex; }
 
-/* ---- filters ---- */
-#filters { padding: 10px 14px; border-bottom: 1px solid #30363d; }
-#filters h2 { font-size: 11px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .05em; }
-.filter-group { margin-bottom: 8px; }
-.filter-group-title { font-size: 10px; color: #6e7681; margin-bottom: 5px; display: flex; align-items: center; justify-content: space-between; }
-.filter-group-title a { color: #58a6ff; cursor: pointer; font-size: 10px; text-decoration: none; }
-.filter-item { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; cursor: pointer; user-select: none; font-size: 11px; }
-.filter-item input[type=checkbox] { accent-color: #1f6feb; cursor: pointer; flex-shrink: 0; }
-.f-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-.f-line { width: 16px; height: 2px; border-radius: 1px; flex-shrink: 0; }
+  /* ---- launcher ---- */
+  #launcher {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 36px;
+  }
+  #launcher h1 {
+    font-size: 22px; font-weight: 500; color: var(--fg);
+    letter-spacing: 0.02em;
+  }
+  #launcher .subtitle { color: var(--muted); font-size: 12px; margin-top: -28px; }
+  .lcards { display: flex; gap: 28px; }
+  .lcard {
+    width: 280px; padding: 26px 24px; background: var(--bg2);
+    border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+    transition: border-color 0.12s, transform 0.12s;
+  }
+  .lcard:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .lcard h2 { font-size: 16px; color: var(--accent); margin-bottom: 8px; }
+  .lcard p { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .lcard .step { color: var(--fg); }
 
-/* ---- info panel ---- */
-#info { flex: 1; overflow-y: auto; padding: 10px 14px; }
-#info h2 { font-size: 11px; color: #8b949e; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .05em; }
-#info-content { font-size: 11px; line-height: 1.6; color: #8b949e; }
-.field { margin-bottom: 6px; }
-.field-key { color: #58a6ff; }
-.field-val { word-break: break-all; color: #c9d1d9; }
-.edge-item { padding: 2px 0; border-bottom: 1px solid #21262d; font-size: 10px; }
-.edge-type { color: #f78166; }
-.node-btn { background: none; border: 1px solid #30363d; border-radius: 3px; color: #58a6ff; cursor: pointer; font-size: 10px; padding: 1px 5px; margin-left: 4px; font-family: inherit; }
-.node-btn:hover { border-color: #58a6ff; }
+  /* ---- tree mode ---- */
+  #tree-mode { flex: 1; display: flex; min-height: 0; }
+  #tree-pane {
+    width: 340px; min-width: 240px; max-width: 60%;
+    background: var(--bg2); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 8px 0;
+    user-select: none;
+  }
+  .tree-search {
+    padding: 6px 10px; border-bottom: 1px solid var(--border);
+    margin-bottom: 6px; position: sticky; top: -8px; background: var(--bg2); z-index: 5;
+  }
+  .tree-search input {
+    width: 100%; padding: 5px 8px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; font-family: inherit;
+    font-size: 11px;
+  }
+  .tree-search input:focus { outline: none; border-color: var(--accent); }
+  .tnode { padding: 1px 0; }
+  .trow {
+    display: flex; align-items: center; gap: 4px; padding: 2px 10px;
+    cursor: pointer; font-size: 12px;
+  }
+  .trow:hover { background: var(--bg3); }
+  .trow.selected { background: var(--accent2); color: #fff; }
+  .trow.selected .tcount { color: #d8e6ff; }
+  .tcaret { color: var(--muted); font-size: 9px; width: 10px; text-align: center; flex-shrink: 0; }
+  .ticon { width: 14px; flex-shrink: 0; text-align: center; font-size: 10px; }
+  .ticon.dir { color: var(--yellow); }
+  .ticon.file { color: var(--accent); }
+  .tname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tcount { margin-left: auto; color: var(--muted); font-size: 10px; padding-left: 6px; flex-shrink: 0; }
+  .tchildren { padding-left: 14px; }
 
-/* ---- status ---- */
-#status { padding: 7px 14px; font-size: 10px; color: #8b949e; border-top: 1px solid #30363d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tree-detail {
+    flex: 1; min-width: 0; overflow: auto; padding: 14px 18px;
+  }
 
-/* ---- canvas ---- */
-#canvas { flex: 1; position: relative; }
-svg { width: 100%; height: 100%; cursor: grab; }
-svg:active { cursor: grabbing; }
+  /* ---- pipeline mode ---- */
+  #pipeline-mode {
+    flex: 1; display: flex; flex-direction: column; min-height: 0;
+  }
+  #pipeline-toolbar {
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: var(--bg2); flex-shrink: 0;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  }
+  #pipeline-toolbar input[type=text] {
+    flex: 1; min-width: 200px; padding: 6px 10px;
+    background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    font-family: inherit; font-size: 12px;
+  }
+  #pipeline-toolbar input[type=text]:focus { outline: none; border-color: var(--accent); }
+  #pipeline-toolbar select, #pipeline-toolbar button {
+    padding: 6px 10px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    font-family: inherit; font-size: 11px; cursor: pointer;
+  }
+  #pipeline-toolbar button.primary { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  #pipeline-toolbar button.primary:hover { background: #2c7eff; }
+  #pipeline-toolbar button:hover { border-color: var(--muted); }
+  #pipeline-breadcrumbs {
+    padding: 6px 14px; background: var(--bg);
+    border-bottom: 1px solid var(--border); font-size: 11px;
+    overflow-x: auto; white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .crumb {
+    display: inline-block; padding: 2px 7px; margin-right: 4px;
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 3px;
+    color: var(--muted); cursor: pointer;
+  }
+  .crumb:hover { border-color: var(--accent); color: var(--accent); }
+  .crumb.last { color: var(--accent); border-color: var(--accent); cursor: default; }
+  .crumb-sep { color: var(--muted); margin-right: 4px; }
+  #pipeline-stages {
+    flex: 1; overflow-y: auto; padding: 14px 18px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
 
-.link { fill: none; stroke-opacity: 0.45; }
-.node-g circle { stroke-width: 1.5; cursor: pointer; }
-.node-g circle:hover { stroke-width: 2.5; }
-.node-g text { font-size: 9px; fill: #8b949e; pointer-events: none; }
-.node-g.selected circle { stroke: #f0f6fc !important; stroke-width: 3 !important; }
-.node-g.dimmed { opacity: 0.15; }
-.link.dimmed { opacity: 0.05; }
+  /* ---- shared cards / sections ---- */
+  .stage {
+    background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .stage h3 {
+    font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .stage h3 .badge {
+    padding: 1px 6px; background: var(--bg3); border-radius: 3px;
+    color: var(--fg); font-size: 10px; letter-spacing: 0;
+  }
+  .hits { display: flex; flex-direction: column; gap: 6px; }
+  .hit {
+    padding: 8px 10px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; cursor: pointer; display: flex; gap: 10px; align-items: baseline;
+  }
+  .hit:hover { border-color: var(--accent); }
+  .hit .id {
+    color: var(--orange); font-size: 11px; min-width: 50px;
+  }
+  .hit .name { color: var(--fg); font-weight: 500; }
+  .hit .fqn { color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .hit .file { margin-left: auto; color: var(--muted); font-size: 11px; }
+  .hit .kind {
+    padding: 1px 6px; border-radius: 3px; font-size: 10px; text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .kind-method { background: rgba(63,185,80,.15); color: var(--green); }
+  .kind-object { background: rgba(210,153,34,.18); color: var(--yellow); }
+  .kind-file   { background: rgba(88,166,255,.15); color: var(--accent); }
 
-/* tooltip */
-#tooltip {
-  position: absolute; background: #21262d; border: 1px solid #30363d; border-radius: 5px;
-  padding: 5px 9px; font-size: 11px; pointer-events: none; display: none;
-  max-width: 280px; word-break: break-all; z-index: 100; color: #c9d1d9; line-height: 1.5;
-}
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; font-size: 12px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { color: var(--fg); word-break: break-all; }
+  .kv .v.mono { font-family: inherit; }
+  .kv a { color: var(--accent); cursor: pointer; }
+  .kv a:hover { text-decoration: underline; }
 
-/* loading overlay */
-#loading {
-  position: absolute; inset: 0; background: rgba(13,17,23,.7);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 13px; color: #8b949e; display: none;
-}
+  .actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    padding: 4px 10px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px;
+    font-family: inherit; font-size: 11px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.primary { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+  .btn.primary:hover { background: #2c7eff; color: #fff; }
+  .btn.small { padding: 2px 7px; font-size: 10px; }
+
+  .walk-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .walk-row {
+    padding: 5px 9px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 3px; font-size: 11px; display: flex; gap: 8px; align-items: baseline;
+    cursor: pointer;
+  }
+  .walk-row:hover { border-color: var(--accent); }
+  .walk-row.unresolved { opacity: 0.7; cursor: default; border-style: dashed; }
+  .walk-row.unresolved:hover { border-color: var(--border); }
+  .walk-row .arr { color: var(--muted); }
+  .walk-row .id { color: var(--orange); min-width: 44px; }
+  .walk-row .name { color: var(--fg); }
+  .walk-row .file { color: var(--muted); margin-left: auto; }
+  .walk-row .meta { color: var(--muted); font-size: 10px; }
+
+  pre.code {
+    margin-top: 8px; padding: 10px 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 4px;
+    overflow: auto; font-size: 11px; line-height: 1.5;
+    max-height: 480px; white-space: pre;
+  }
+  pre.code .ln { color: var(--muted); padding-right: 10px; user-select: none; }
+
+  .empty { color: var(--muted); font-style: italic; font-size: 11px; }
+  .err { color: var(--red); font-size: 12px; }
+  #toast {
+    position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+    background: var(--bg3); color: var(--fg); padding: 7px 14px;
+    border: 1px solid var(--border); border-radius: 4px;
+    font-size: 11px; display: none; z-index: 1000;
+  }
+
+  /* ---- file overview (tree mode right pane) ---- */
+  .file-section { margin-top: 14px; }
+  .file-section h4 {
+    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 6px;
+  }
+  .file-section .row {
+    padding: 4px 8px; background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 3px; margin-bottom: 3px; font-size: 11px;
+    display: flex; gap: 8px; align-items: baseline; cursor: pointer;
+  }
+  .file-section .row:hover { border-color: var(--accent); }
+  .file-section .row .id { color: var(--orange); min-width: 44px; }
+  .file-section .row.import:hover { border-color: var(--border); cursor: default; }
+  .file-section .row.import.resolved { cursor: pointer; }
+  .file-section .row.import.resolved:hover { border-color: var(--accent); }
 </style>
 </head>
+
 <body>
 
-<div id="sidebar">
-  <h1>mcp-indexer graph</h1>
-
-  <div id="controls">
-    <div id="mode-tabs">
-      <div class="tab active" id="tab-full" onclick="setMode('full')">Full graph</div>
-      <div class="tab" id="tab-node" onclick="setMode('node')">From node</div>
-    </div>
-    <div id="node-controls">
-      <div>
-        <label class="small">Node ID</label>
-        <input id="node-input" type="text" placeholder="f:src/app.py" />
-      </div>
-      <div>
-        <label class="small">Depth <span id="depth-val">2</span></label>
-        <div class="depth-row">
-          <input id="depth-slider" type="range" min="1" max="6" value="2"
-            oninput="document.getElementById('depth-val').textContent=this.value" />
-        </div>
-      </div>
-      <button id="load-btn" onclick="loadGraph()">Load</button>
-    </div>
+<header>
+  <div class="title">mcp-indexer</div>
+  <div class="meta" id="hdr-meta">…</div>
+  <div class="tabs">
+    <button class="tab" id="tab-launcher" onclick="setMode('launcher')">⌂ Start</button>
+    <button class="tab" id="tab-tree" onclick="setMode('tree')">▤ Tree</button>
+    <button class="tab" id="tab-pipeline" onclick="setMode('pipeline')">→ Pipeline</button>
   </div>
+</header>
 
-  <div id="filters">
-    <h2>Filters</h2>
-    <div class="filter-group">
-      <div class="filter-group-title">
-        Edge types
-        <span><a onclick="toggleAll('edge',true)">all</a> / <a onclick="toggleAll('edge',false)">none</a></span>
-      </div>
-      <div id="edge-filters"></div>
+<main>
+  <!-- LAUNCHER -->
+  <section id="launcher">
+    <div>
+      <h1 id="lc-svc">…</h1>
+      <div class="subtitle" id="lc-sub">…</div>
     </div>
-    <div class="filter-group">
-      <div class="filter-group-title">
-        Node types
-        <span><a onclick="toggleAll('node',true)">all</a> / <a onclick="toggleAll('node',false)">none</a></span>
+    <div class="lcards">
+      <div class="lcard" onclick="setMode('tree')">
+        <h2>▤ Tree</h2>
+        <p>
+          <span class="step">Open the file tree</span> of the indexed service.
+          Browse directories, drill into files, see classes and methods, view source code.
+        </p>
+        <p style="margin-top:8px">Best for: orientation, structural overview.</p>
       </div>
-      <div id="node-filters"></div>
+      <div class="lcard" onclick="setMode('pipeline')">
+        <h2>→ Pipeline</h2>
+        <p>
+          <span class="step">Walk the same path the agent uses:</span>
+          search by keyword → peek a hit → walk graph edges (calls / inherits / defines / imports) →
+          drill into neighbors. Breadcrumbs let you backtrack.
+        </p>
+        <p style="margin-top:8px">Best for: tracing flows, finding callers, reverse-engineering behavior.</p>
+      </div>
     </div>
-  </div>
+  </section>
 
-  <div id="info">
-    <h2>Node info</h2>
-    <div id="info-content"><span style="color:#6e7681">Click a node to see details</span></div>
-  </div>
+  <!-- TREE -->
+  <section id="tree-mode" style="display:none">
+    <aside id="tree-pane">
+      <div class="tree-search">
+        <input id="tree-filter" type="text" placeholder="filter files…" oninput="filterTree(this.value)">
+      </div>
+      <div id="tree-root"></div>
+    </aside>
+    <div id="tree-detail">
+      <div class="empty">Select a file on the left to view its overview.</div>
+    </div>
+  </section>
 
-  <div id="status">—</div>
-</div>
+  <!-- PIPELINE -->
+  <section id="pipeline-mode" style="display:none; flex-direction:column; flex:1;">
+    <div id="pipeline-toolbar">
+      <input id="pl-q" type="text" placeholder="search query…" onkeydown="if(event.key==='Enter')plSearch()">
+      <select id="pl-kind">
+        <option value="">all kinds</option>
+        <option value="method">method</option>
+        <option value="object">object</option>
+        <option value="file">file</option>
+      </select>
+      <button class="primary" onclick="plSearch()">Search</button>
+      <button onclick="plReset()">Reset</button>
+    </div>
+    <div id="pipeline-breadcrumbs"></div>
+    <div id="pipeline-stages"></div>
+  </section>
+</main>
 
-<div id="canvas">
-  <svg id="svg"></svg>
-  <div id="tooltip"></div>
-  <div id="loading">Computing layout…</div>
-</div>
+<div id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 <script>
-const NODE_COLOR = { file:'#58a6ff', module:'#3fb950', symbol:'#d29922', unresolved:'#6e7681' };
-const EDGE_COLOR = { imports:'#58a6ff', contains:'#3fb950', defines:'#d29922', calls:'#f78166', base:'#bc8cff' };
-const NODE_R     = { file:6, module:7, symbol:5, unresolved:4 };
+// ────────── state ──────────
+const state = {
+  svc: null,
+  stats: null,
+  treeFiles: null,        // raw list from /api/tree
+  treeNodes: null,        // built tree { name, dir, children, file? }
+  selectedFilePath: null,
+  pipeline: {
+    history: [],          // [{label, type:'search'|'peek'|'walk', payload}]
+  },
+};
 
-// ---- state ----
-let mode = 'full';
-let graphData = { nodes:[], links:[] };   // full loaded data (with computed positions)
-let svgLinks, svgNodes;                   // d3 selections for filter toggling
-let selectedId = null;
+// ────────── helpers ──────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-// ---- helpers ----
-function nodeTypeOf(id) {
-  if (id.startsWith('f:')) return 'file';
-  if (id.startsWith('m:')) return 'module';
-  if (id.startsWith('s:')) return 'symbol';
-  return 'unresolved';
+function showToast(msg, isErr=false) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.style.color = isErr ? 'var(--red)' : 'var(--fg)';
+  t.style.display = 'block';
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => { t.style.display = 'none'; }, 2400);
 }
-function nodeLabelOf(id) {
-  if (id.startsWith('f:')) { const p=id.slice(2); return p.split('/').pop()||p; }
-  if (id.startsWith('m:')) { const ps=id.split(':'); return ps.slice(2).join(':')||id; }
-  if (id.startsWith('s:')) { const ps=id.split(':'); return ps[2]||id; }
-  if (id.startsWith('x:')) return id.slice(2);
-  return id;
-}
-function edgeColor(t) { return EDGE_COLOR[t]||'#8b949e'; }
-function status(msg) { document.getElementById('status').textContent = msg; }
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// ---- mode ----
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) {
+    let err = `HTTP ${r.status}`;
+    try { const j = await r.json(); if (j.error) err = j.error; } catch {}
+    throw new Error(err);
+  }
+  return r.json();
+}
+
+function kindClass(k) { return 'kind-' + k; }
+
+// ────────── mode switching ──────────
 function setMode(m) {
-  mode = m;
-  document.getElementById('tab-full').classList.toggle('active', m==='full');
-  document.getElementById('tab-node').classList.toggle('active', m==='node');
-  document.getElementById('node-controls').classList.toggle('visible', m==='node');
-  if (m==='full') loadGraph();
-}
-
-// ---- filters state ----
-const edgeFilters = {};  // type → bool
-const nodeFilters = {};  // type → bool
-
-function buildFilterUI(edgeTypes, nodeTypes) {
-  const ef = document.getElementById('edge-filters');
-  ef.innerHTML = '';
-  edgeTypes.forEach(t => {
-    if (!(t in edgeFilters)) edgeFilters[t] = true;
-    ef.insertAdjacentHTML('beforeend', `
-      <label class="filter-item">
-        <input type="checkbox" data-kind="edge" data-type="${t}" ${edgeFilters[t]?'checked':''} onchange="onFilterChange(this)">
-        <div class="f-line" style="background:${edgeColor(t)}"></div>
-        ${t}
-      </label>`);
+  ['launcher','tree','pipeline'].forEach(name => {
+    $(name === 'launcher' ? 'launcher' : name + '-mode').style.display = (name === m) ? '' : 'none';
+    $('tab-' + name).classList.toggle('active', name === m);
   });
-
-  const nf = document.getElementById('node-filters');
-  nf.innerHTML = '';
-  nodeTypes.forEach(t => {
-    if (!(t in nodeFilters)) nodeFilters[t] = true;
-    nf.insertAdjacentHTML('beforeend', `
-      <label class="filter-item">
-        <input type="checkbox" data-kind="node" data-type="${t}" ${nodeFilters[t]?'checked':''} onchange="onFilterChange(this)">
-        <div class="f-dot" style="background:${NODE_COLOR[t]||'#8b949e'}"></div>
-        ${t}
-      </label>`);
-  });
+  if (m === 'tree' && !state.treeFiles) loadTree();
 }
 
-function onFilterChange(el) {
-  const kind = el.dataset.kind;
-  const type = el.dataset.type;
-  if (kind === 'edge') edgeFilters[type] = el.checked;
-  if (kind === 'node') nodeFilters[type] = el.checked;
-  applyFilters();
-}
-
-function toggleAll(kind, val) {
-  const map = kind==='edge' ? edgeFilters : nodeFilters;
-  Object.keys(map).forEach(k => map[k]=val);
-  document.querySelectorAll(`input[data-kind="${kind}"]`).forEach(cb => cb.checked=val);
-  applyFilters();
-}
-
-function applyFilters() {
-  if (!svgLinks || !svgNodes) return;
-
-  function linkVisible(l) {
-    if (!edgeFilters[l.type]) return false;
-    const sType = typeof l.source==='object' ? l.source.type : nodeTypeOf(typeof l.source==='object' ? l.source.id : l.source);
-    const tType = typeof l.target==='object' ? l.target.type : nodeTypeOf(typeof l.target==='object' ? l.target.id : l.target);
-    return nodeFilters[sType] && nodeFilters[tType];
-  }
-
-  // determine which nodes are "alive" (type visible AND have ≥1 visible edge)
-  const visibleEdgeNodeIds = new Set();
-  graphData.links.forEach(l => {
-    if (linkVisible(l)) {
-      const sid = typeof l.source==='object' ? l.source.id : l.source;
-      const tid = typeof l.target==='object' ? l.target.id : l.target;
-      visibleEdgeNodeIds.add(sid);
-      visibleEdgeNodeIds.add(tid);
-    }
-  });
-
-  svgLinks.style('display', l => linkVisible(l) ? null : 'none');
-
-  svgNodes.style('display', d => {
-    if (!nodeFilters[d.type]) return 'none';
-    if (!visibleEdgeNodeIds.has(d.id)) return 'none';
-    return null;
-  });
-
-  const visN = svgNodes.filter(d => nodeFilters[d.type] && visibleEdgeNodeIds.has(d.id)).size();
-  const visL = svgLinks.filter(l => linkVisible(l)).size();
-  status(`${visN} nodes, ${visL} edges shown  (total: ${graphData.nodes.length} / ${graphData.links.length})`);
-}
-
-// ---- load ----
-async function loadGraph() {
-  document.getElementById('load-btn').disabled = true;
-  document.getElementById('loading').style.display = 'flex';
-  status('Loading…');
+// ────────── header / launcher init ──────────
+async function init() {
   try {
-    let url;
-    if (mode==='full') {
-      url = '/api/graph';
-    } else {
-      const nodeId = document.getElementById('node-input').value.trim();
-      const depth  = document.getElementById('depth-slider').value;
-      if (!nodeId) { status('Enter a node ID'); document.getElementById('load-btn').disabled=false; document.getElementById('loading').style.display='none'; return; }
-      url = `/api/neighbors?node=${encodeURIComponent(nodeId)}&depth=${depth}`;
-    }
-    const resp = await fetch(url);
-    if (!resp.ok) { status(`Error ${resp.status}: ${await resp.text()}`); return; }
-    const data = await resp.json();
-
-    // compute layout synchronously (no animation)
-    await layoutAndRender(data);
-  } catch(e) {
-    status(`Error: ${e.message}`);
+    const info = await api('/api/info');
+    state.svc = info.service;
+    state.stats = info.stats;
+    const s = info.service;
+    const st = info.stats;
+    $('hdr-meta').innerHTML =
+      `<b>${esc(s.id)}</b> · ${esc(s.root)} · ` +
+      `${st.files} files · ${st.objects} objs · ${st.methods} methods · ` +
+      `${st.calls_resolved||0}/${(st.calls_resolved||0)+(st.calls_unresolved||0)} calls resolved`;
+    $('lc-svc').textContent = s.id;
+    $('lc-sub').innerHTML =
+      `${esc(s.root)}<br>` +
+      `${st.files} files · ${st.objects} objects · ${st.methods} methods · ` +
+      `${st.search_docs} search docs`;
+  } catch (e) {
+    $('hdr-meta').innerHTML = `<span class="err">${esc(e.message)}</span>`;
   }
-  document.getElementById('load-btn').disabled = false;
-  document.getElementById('loading').style.display = 'none';
+  setMode('launcher');
 }
 
-// ---- layout (static) ----
-async function layoutAndRender(data) {
-  // yield to browser so "Computing layout…" appears
-  await new Promise(r => setTimeout(r, 0));
-
-  const W = document.getElementById('canvas').clientWidth;
-  const H = document.getElementById('canvas').clientHeight;
-
-  const sim = d3.forceSimulation(data.nodes)
-    .force('link', d3.forceLink(data.links).id(d=>d.id).distance(70).strength(0.5))
-    .force('charge', d3.forceManyBody().strength(-180))
-    .force('center', d3.forceCenter(W/2, H/2))
-    .force('collision', d3.forceCollide(16))
-    .stop();
-
-  // run synchronously — no DOM updates during ticks
-  const ticks = Math.min(Math.ceil(Math.log(data.nodes.length + 2) * 200), 400);
-  for (let i = 0; i < ticks; i++) sim.tick();
-
-  graphData = data;
-  renderGraph(data);
+// ────────── tree mode ──────────
+async function loadTree() {
+  $('tree-root').innerHTML = '<div class="empty" style="padding:10px">Loading…</div>';
+  try {
+    const data = await api('/api/tree');
+    state.treeFiles = data.files || [];
+    state.treeNodes = buildTree(state.treeFiles);
+    renderTree();
+  } catch (e) {
+    $('tree-root').innerHTML = `<div class="err" style="padding:10px">${esc(e.message)}</div>`;
+  }
 }
 
-// ---- render (one-shot) ----
-function renderGraph(data) {
-  selectedId = null;
-  document.getElementById('info-content').innerHTML = '<span style="color:#6e7681">Click a node to see details</span>';
+// build nested tree from flat path list
+function buildTree(files) {
+  const root = { name: '', dir: true, children: new Map() };
+  for (const f of files) {
+    const parts = f.path.split('/');
+    let cur = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      if (!cur.children.has(seg)) cur.children.set(seg, { name: seg, dir: true, children: new Map() });
+      cur = cur.children.get(seg);
+    }
+    const leafName = parts[parts.length - 1];
+    cur.children.set(leafName, { name: leafName, dir: false, file: f });
+  }
+  return root;
+}
 
-  const svg = d3.select('#svg');
-  svg.selectAll('*').remove();
+function renderTree() {
+  const root = $('tree-root');
+  root.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  renderTreeChildren(state.treeNodes, frag, 0);
+  root.appendChild(frag);
+}
 
-  const g = svg.append('g');
-  svg.call(d3.zoom().scaleExtent([0.03, 12]).on('zoom', e => g.attr('transform', e.transform)));
-
-  // markers (one per edge type)
-  const edgeTypes = [...new Set(data.links.map(l=>l.type))];
-  const nodeTypes  = [...new Set(data.nodes.map(n=>n.type))];
-  buildFilterUI(edgeTypes, nodeTypes);
-
-  const defs = svg.append('defs');
-  edgeTypes.forEach(t => {
-    defs.append('marker')
-      .attr('id', `arr-${t}`)
-      .attr('viewBox', '0 -4 8 8').attr('refX', 16).attr('refY', 0)
-      .attr('markerWidth', 5).attr('markerHeight', 5).attr('orient', 'auto')
-      .append('path').attr('d','M0,-4L8,0L0,4').attr('fill', edgeColor(t)).attr('opacity', 0.7);
+function renderTreeChildren(node, parentEl, depth) {
+  const entries = [...node.children.entries()].sort((a,b) => {
+    // dirs first
+    if (a[1].dir !== b[1].dir) return a[1].dir ? -1 : 1;
+    return a[0].localeCompare(b[0]);
   });
-
-  // links
-  svgLinks = g.append('g').selectAll('line')
-    .data(data.links)
-    .join('line')
-    .attr('class','link')
-    .attr('stroke', d=>edgeColor(d.type))
-    .attr('stroke-width', 1)
-    .attr('marker-end', d=>`url(#arr-${d.type})`)
-    .attr('x1', d=>d.source.x).attr('y1', d=>d.source.y)
-    .attr('x2', d=>d.target.x).attr('y2', d=>d.target.y);
-
-  // nodes
-  svgNodes = g.append('g').selectAll('g')
-    .data(data.nodes)
-    .join('g')
-    .attr('class','node-g')
-    .attr('transform', d=>`translate(${d.x},${d.y})`)
-    .on('click', (_e,d) => selectNode(d))
-    .on('mouseover', (e,d) => showTooltip(e,d))
-    .on('mouseout', hideTooltip);
-
-  svgNodes.append('circle')
-    .attr('r', d=>NODE_R[d.type]||5)
-    .attr('fill', d=>NODE_COLOR[d.type]||'#8b949e')
-    .attr('stroke', d=>(d3.color(NODE_COLOR[d.type]||'#8b949e')||{}).darker(1));
-
-  svgNodes.append('text')
-    .attr('dx', d=>(NODE_R[d.type]||5)+3)
-    .attr('dy','0.35em')
-    .text(d=>d.label);
-
-  applyFilters();
+  for (const [name, child] of entries) {
+    const wrap = document.createElement('div');
+    wrap.className = 'tnode';
+    if (child.dir) {
+      const row = document.createElement('div');
+      row.className = 'trow';
+      row.dataset.kind = 'dir';
+      row.dataset.name = name.toLowerCase();
+      row.innerHTML = `
+        <span class="tcaret">▾</span>
+        <span class="ticon dir">▤</span>
+        <span class="tname">${esc(name)}</span>`;
+      const childWrap = document.createElement('div');
+      childWrap.className = 'tchildren';
+      renderTreeChildren(child, childWrap, depth + 1);
+      row.onclick = () => {
+        const open = childWrap.style.display !== 'none';
+        childWrap.style.display = open ? 'none' : '';
+        row.querySelector('.tcaret').textContent = open ? '▸' : '▾';
+      };
+      wrap.appendChild(row);
+      wrap.appendChild(childWrap);
+    } else {
+      const f = child.file;
+      const row = document.createElement('div');
+      row.className = 'trow';
+      row.dataset.kind = 'file';
+      row.dataset.path = f.path;
+      row.dataset.name = name.toLowerCase();
+      row.innerHTML = `
+        <span class="tcaret"></span>
+        <span class="ticon file">·</span>
+        <span class="tname">${esc(name)}</span>
+        <span class="tcount">${f.objects||0}o ${f.methods||0}m</span>`;
+      row.onclick = () => selectFile(f.path);
+      wrap.appendChild(row);
+    }
+    parentEl.appendChild(wrap);
+  }
 }
 
-// ---- select node ----
-function selectNode(d) {
-  selectedId = d.id;
-  svgNodes.classed('selected', n=>n.id===d.id);
-
-  const nodeEdges = graphData.links.filter(e => {
-    const s = typeof e.source==='object' ? e.source.id : e.source;
-    const t = typeof e.target==='object' ? e.target.id : e.target;
-    return s===d.id || t===d.id;
+function filterTree(q) {
+  q = q.trim().toLowerCase();
+  const rows = $('tree-root').querySelectorAll('.trow');
+  if (!q) {
+    rows.forEach(r => r.parentElement.style.display = '');
+    return;
+  }
+  // Hide non-matching files; show all directories (collapse logic stays)
+  const matchedDirs = new Set();
+  rows.forEach(r => {
+    if (r.dataset.kind === 'file') {
+      const path = (r.dataset.path || '').toLowerCase();
+      const hit = path.includes(q);
+      r.parentElement.style.display = hit ? '' : 'none';
+      if (hit) {
+        // mark all ancestor .tnode as visible
+        let p = r.parentElement.parentElement;
+        while (p && p.id !== 'tree-root') {
+          if (p.classList.contains('tchildren')) p.style.display = '';
+          if (p.classList.contains('tnode')) {
+            p.style.display = '';
+            const dirRow = p.querySelector(':scope > .trow[data-kind="dir"]');
+            if (dirRow) matchedDirs.add(dirRow);
+          }
+          p = p.parentElement;
+        }
+      }
+    }
   });
+  // Hide dirs whose entire subtree has no matches
+  rows.forEach(r => {
+    if (r.dataset.kind === 'dir' && !matchedDirs.has(r)) {
+      r.parentElement.style.display = 'none';
+    }
+  });
+}
 
-  const edgesHtml = nodeEdges.map(e => {
-    const s = typeof e.source==='object' ? e.source.id : e.source;
-    const t = typeof e.target==='object' ? e.target.id : e.target;
-    const other = s===d.id ? t : s;
-    const dir   = s===d.id ? '→' : '←';
-    const otherLabel = nodeLabelOf(other);
-    return `<div class="edge-item">
-      <span class="edge-type">${e.type}</span> ${dir}
-      <span title="${escHtml(other)}">${escHtml(otherLabel)}</span>
-      <button class="node-btn" onclick="jumpTo('${escHtml(other)}')">focus</button>
+async function selectFile(path) {
+  state.selectedFilePath = path;
+  document.querySelectorAll('#tree-root .trow').forEach(r => {
+    r.classList.toggle('selected', r.dataset.path === path);
+  });
+  const det = $('tree-detail');
+  det.innerHTML = '<div class="empty">Loading…</div>';
+  try {
+    const f = await api('/api/file?path=' + encodeURIComponent(path));
+    renderFileOverview(f);
+  } catch (e) {
+    det.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+function renderFileOverview(f) {
+  const det = $('tree-detail');
+  let html = `
+    <div class="kv">
+      <span class="k">id</span><span class="v">${esc(f.id)}</span>
+      <span class="k">path</span><span class="v">${esc(f.path)}</span>
+      <span class="k">lang</span><span class="v">${esc(f.lang||'-')}</span>
+      <span class="k">package</span><span class="v">${esc(f.pkg||'-')}</span>
+    </div>
+    <div class="actions">
+      <button class="btn" onclick="treeOpenInPipeline('${esc(f.id)}')">→ open in pipeline</button>
+    </div>`;
+
+  if (f.imports && f.imports.length) {
+    html += `<div class="file-section"><h4>imports (${f.imports.length})</h4>`;
+    for (const ir of f.imports) {
+      const cls = ir.tgt ? 'row import resolved' : 'row import';
+      const click = ir.tgt ? `onclick="selectFileById('${esc(ir.tgt)}')"` : '';
+      html += `<div class="${cls}" ${click}>
+        <span class="id">${esc(ir.tgt||'ext')}</span>
+        <span>${esc(ir.raw)}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (f.objects && f.objects.length) {
+    html += `<div class="file-section"><h4>objects (${f.objects.length})</h4>`;
+    for (const o of f.objects) {
+      html += `<div class="row" onclick="treePeek('${esc(o.id)}')">
+        <span class="id">${esc(o.id)}</span>
+        <span class="kind kind-object">${esc(o.subk||'object')}</span>
+        <span>${esc(o.name)}</span>
+        ${o.methods ? `<span class="meta" style="color:var(--muted);font-size:10px">${o.methods}m</span>` : ''}
+        <span class="file" style="margin-left:auto;color:var(--muted);font-size:10px">L${o.l}–${o.end||o.l}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  if (f.methods && f.methods.length) {
+    html += `<div class="file-section"><h4>top-level methods (${f.methods.length})</h4>`;
+    for (const m of f.methods) {
+      html += `<div class="row" onclick="treePeek('${esc(m.id)}')">
+        <span class="id">${esc(m.id)}</span>
+        <span class="kind kind-method">${esc(m.subk||'method')}</span>
+        <span>${esc(m.name)}</span>
+        <span class="file" style="margin-left:auto;color:var(--muted);font-size:10px">L${m.l}–${m.end||m.l}</span>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  if ((!f.objects || !f.objects.length) && (!f.methods || !f.methods.length) && (!f.imports || !f.imports.length)) {
+    html += `<div class="empty" style="margin-top:14px">Empty file or unparsed content.</div>`;
+  }
+
+  det.innerHTML = html;
+}
+
+async function selectFileById(shortId) {
+  // resolve short fileId → path via state.treeFiles
+  const f = (state.treeFiles||[]).find(x => x.id === shortId);
+  if (!f) { showToast('file ' + shortId + ' not in tree', true); return; }
+  selectFile(f.path);
+}
+
+async function treePeek(id) {
+  // Show inline peek + edges + code below in detail pane (append at top of detail).
+  try {
+    const p = await api('/api/peek?id=' + encodeURIComponent(id));
+    const det = $('tree-detail');
+    const block = document.createElement('div');
+    block.className = 'stage';
+    block.style.marginBottom = '14px';
+    block.innerHTML = renderPeekHTML(p, /*inTree=*/true);
+    det.insertBefore(block, det.firstChild);
+    block.scrollIntoView({behavior:'smooth', block:'nearest'});
+  } catch (e) {
+    showToast(e.message, true);
+  }
+}
+
+function treeOpenInPipeline(fileShortId) {
+  setMode('pipeline');
+  plPushPeek(fileShortId);
+}
+
+// ────────── pipeline mode ──────────
+function plReset() {
+  state.pipeline.history = [];
+  $('pl-q').value = '';
+  $('pipeline-breadcrumbs').innerHTML = '';
+  $('pipeline-stages').innerHTML = '<div class="empty" style="padding:14px">Type a query above and press Enter, or jump from the tree.</div>';
+}
+
+async function plSearch() {
+  const q = $('pl-q').value.trim();
+  if (!q) return;
+  const kind = $('pl-kind').value;
+  state.pipeline.history.push({ type:'search', label: `search "${q}"${kind?' ['+kind+']':''}`, payload:{q, kind} });
+  await plRender();
+}
+
+async function plPushPeek(id, label) {
+  state.pipeline.history.push({ type:'peek', label: label || ('peek ' + id), payload:{id} });
+  await plRender();
+}
+
+async function plPushWalk(id, edge, dir, fromLabel) {
+  state.pipeline.history.push({
+    type: 'walk',
+    label: `${fromLabel||id}: ${edge}/${dir}`,
+    payload: { id, edge, dir },
+  });
+  await plRender();
+}
+
+function plJumpTo(idx) {
+  state.pipeline.history = state.pipeline.history.slice(0, idx + 1);
+  plRender();
+}
+
+async function plRender() {
+  // Breadcrumbs
+  const bc = $('pipeline-breadcrumbs');
+  if (!state.pipeline.history.length) {
+    bc.innerHTML = '<span class="empty">no history</span>';
+  } else {
+    const parts = state.pipeline.history.map((h, i) => {
+      const last = (i === state.pipeline.history.length - 1);
+      const cls = 'crumb' + (last?' last':'');
+      const onclick = last ? '' : `onclick="plJumpTo(${i})"`;
+      return `<span class="${cls}" ${onclick}>${esc(h.label)}</span>` +
+             (last ? '' : '<span class="crumb-sep">›</span>');
+    });
+    bc.innerHTML = parts.join('');
+  }
+
+  // Stages: render the last stage in detail; previous stages collapsed (we just show results of latest).
+  const stages = $('pipeline-stages');
+  const last = state.pipeline.history[state.pipeline.history.length - 1];
+  if (!last) {
+    stages.innerHTML = '<div class="empty" style="padding:14px">Type a query above and press Enter, or jump from the tree.</div>';
+    return;
+  }
+
+  stages.innerHTML = '<div class="empty" style="padding:14px">Loading…</div>';
+  try {
+    if (last.type === 'search') stages.innerHTML = await plRenderSearch(last.payload);
+    else if (last.type === 'peek') stages.innerHTML = await plRenderPeek(last.payload);
+    else if (last.type === 'walk') stages.innerHTML = await plRenderWalk(last.payload);
+  } catch (e) {
+    stages.innerHTML = `<div class="err" style="padding:14px">${esc(e.message)}</div>`;
+  }
+}
+
+async function plRenderSearch({q, kind}) {
+  const params = new URLSearchParams({ q, limit: '30' });
+  if (kind) params.set('kind', kind);
+  const data = await api('/api/search?' + params);
+  const hits = data.hits || [];
+  if (!hits.length) return `<div class="stage"><h3>search results <span class="badge">0</span></h3><div class="empty">no matches</div></div>`;
+
+  const rows = hits.map(h => `
+    <div class="hit" onclick="plPushPeek('${esc(h.id)}', '${esc(h.k+':'+(h.name||h.id))}')">
+      <span class="kind ${kindClass(h.k)}">${esc(h.k)}</span>
+      <span class="id">${esc(h.id)}</span>
+      <span class="name">${esc(h.name || h.id)}</span>
+      ${h.fqn ? `<span class="fqn">${esc(h.fqn)}</span>` : ''}
+      <span class="file">${esc(h.file||'')}${h.l?':'+h.l:''}</span>
+    </div>`).join('');
+
+  return `<div class="stage">
+    <h3>search results <span class="badge">${hits.length}</span></h3>
+    <div class="hits">${rows}</div>
+  </div>`;
+}
+
+async function plRenderPeek({id}) {
+  const p = await api('/api/peek?id=' + encodeURIComponent(id));
+  return `<div class="stage">
+    <h3>peek <span class="badge">${esc(p.k||'?')}</span> <span class="badge">${esc(p.id||id)}</span></h3>
+    ${renderPeekHTML(p, /*inTree=*/false)}
+  </div>`;
+}
+
+async function plRenderWalk({id, edge, dir}) {
+  const params = new URLSearchParams({ id, edge, dir, limit: '100' });
+  const data = await api('/api/walk?' + params);
+  const items = data.items || [];
+  if (!items.length) return `<div class="stage"><h3>walk ${esc(edge)}/${esc(dir)} <span class="badge">0</span></h3><div class="empty">no edges</div></div>`;
+
+  const rows = items.map(it => {
+    // direction arrow: 'in' means "this is target", arrow ←
+    const target = it.to || it.from || '';
+    const arr = it.from ? '←' : '→';
+    const cls = target ? 'walk-row' : 'walk-row unresolved';
+    const click = target ? `onclick="plPushPeek('${esc(target)}', '${esc('peek '+target)}')"` : '';
+    const meta = [];
+    if (it.line) meta.push(`L${it.line}`);
+    if (it.conf != null && it.conf > 0) meta.push(`c${it.conf}`);
+    if (it.rel) meta.push(it.rel);
+    return `<div class="${cls}" ${click}>
+      <span class="arr">${arr}</span>
+      ${target ? `<span class="id">${esc(target)}</span>` : ''}
+      <span class="name">${esc(it.name||it.hint||'?')}</span>
+      ${it.fqn ? `<span class="meta">${esc(it.fqn)}</span>` : ''}
+      ${meta.length ? `<span class="meta">[${meta.join(' ')}]</span>` : ''}
+      <span class="file">${esc(it.file||'')}${it.l?':'+it.l:''}</span>
     </div>`;
   }).join('');
 
-  document.getElementById('info-content').innerHTML = `
-    <div class="field"><span class="field-key">id</span><br><span class="field-val">${escHtml(d.id)}</span></div>
-    <div class="field"><span class="field-key">type</span> <span class="field-val">${d.type}</span></div>
-    <div class="field"><span class="field-key">edges (${nodeEdges.length})</span>
-      <div style="margin-top:4px">${edgesHtml||'<span style="color:#6e7681">none</span>'}</div>
-    </div>`;
+  return `<div class="stage">
+    <h3>walk <span class="badge">${esc(edge)}/${esc(dir)}</span> <span class="badge">${items.length}/${data.total||items.length}</span></h3>
+    <div class="walk-list">${rows}</div>
+  </div>`;
 }
 
-// jump: switch to "from node" mode and load from that nodeId
-function jumpTo(nodeId) {
-  setMode('node');
-  document.getElementById('node-input').value = nodeId;
-  loadGraph();
+// Render peek details + actions. Used both in tree-mode (inline) and pipeline-mode.
+function renderPeekHTML(p, inTree) {
+  if (!p || !p.k) return `<div class="empty">unknown peek result</div>`;
+
+  const k = p.k;
+  let html = '<div class="kv">';
+  if (p.id) html += `<span class="k">id</span><span class="v">${esc(p.id)}</span>`;
+  if (p.subk) html += `<span class="k">subkind</span><span class="v">${esc(p.subk)}</span>`;
+  if (p.name) html += `<span class="k">name</span><span class="v">${esc(p.name)}</span>`;
+  if (p.fqn) html += `<span class="k">fqn</span><span class="v">${esc(p.fqn)}</span>`;
+  if (p.path) html += `<span class="k">path</span><span class="v">${esc(p.path)}</span>`;
+  if (p.file) html += `<span class="k">file</span><span class="v">${esc(p.file)}${p.l?':'+p.l:''}${p.end?'–'+p.end:''}</span>`;
+  if (p.lang) html += `<span class="k">lang</span><span class="v">${esc(p.lang)}</span>`;
+  if (p.pkg) html += `<span class="k">package</span><span class="v">${esc(p.pkg)}</span>`;
+  if (p.owner) html += `<span class="k">owner</span><span class="v"><a onclick="plPushPeek('${esc(p.owner)}','peek ${esc(p.owner)}')">${esc(p.owner)}</a></span>`;
+  if (p.sig) html += `<span class="k">signature</span><span class="v mono">${esc(p.sig)}</span>`;
+  if (p.doc) html += `<span class="k">doc</span><span class="v">${esc(p.doc)}</span>`;
+  // counts
+  if (k === 'method') {
+    if (p.calls != null) html += `<span class="k">calls</span><span class="v">${p.calls||0}</span>`;
+    if (p.called_by != null) html += `<span class="k">called_by</span><span class="v">${p.called_by||0}</span>`;
+    if (p.unresolved_calls != null) html += `<span class="k">unresolved</span><span class="v">${p.unresolved_calls||0}</span>`;
+  }
+  if (k === 'object') {
+    if (p.extended_by != null) html += `<span class="k">extended_by</span><span class="v">${p.extended_by||0}</span>`;
+  }
+  if (k === 'file') {
+    if (p.objects != null) html += `<span class="k">objects</span><span class="v">${p.objects}</span>`;
+    if (p.methods != null) html += `<span class="k">methods</span><span class="v">${p.methods}</span>`;
+    if (p.imports != null) html += `<span class="k">imports</span><span class="v">${p.imports}</span>`;
+  }
+  html += '</div>';
+
+  // method/object related lists
+  if (k === 'object') {
+    if (p.methods && p.methods.length) {
+      html += `<div class="file-section"><h4>methods (${p.methods.length})</h4>`;
+      html += p.methods.map(mid =>
+        `<div class="row" onclick="plPushPeek('${esc(mid)}','peek ${esc(mid)}')">
+          <span class="id">${esc(mid)}</span>
+          <span class="kind kind-method">method</span>
+        </div>`).join('');
+      html += `</div>`;
+    }
+    if (p.extends && p.extends.length) {
+      html += `<div class="file-section"><h4>extends</h4>`;
+      html += p.extends.map(id => `<div class="row" onclick="plPushPeek('${esc(id)}','peek ${esc(id)}')"><span class="id">${esc(id)}</span></div>`).join('');
+      html += `</div>`;
+    }
+    if (p.implements && p.implements.length) {
+      html += `<div class="file-section"><h4>implements</h4>`;
+      html += p.implements.map(id => `<div class="row" onclick="plPushPeek('${esc(id)}','peek ${esc(id)}')"><span class="id">${esc(id)}</span></div>`).join('');
+      html += `</div>`;
+    }
+  }
+
+  // Action buttons
+  const actions = [];
+  if (k === 'method') {
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','calls','out','${esc(p.name||p.id)}')">walk calls →</button>`);
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','calls','in','${esc(p.name||p.id)}')">← called by</button>`);
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','defines','in','${esc(p.name||p.id)}')">owner</button>`);
+  }
+  if (k === 'object') {
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','defines','out','${esc(p.name||p.id)}')">methods (defines→)</button>`);
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','inherits','out','${esc(p.name||p.id)}')">parents (inherits→)</button>`);
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','inherits','in','${esc(p.name||p.id)}')">subclasses (←inherits)</button>`);
+  }
+  if (k === 'file') {
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','imports','out','${esc(p.path||p.id)}')">imports →</button>`);
+    actions.push(`<button class="btn" onclick="plPushWalk('${esc(p.id)}','imports','in','${esc(p.path||p.id)}')">← imported by</button>`);
+  }
+  if (k === 'method' || k === 'object') {
+    actions.push(`<button class="btn primary" onclick="loadCode('${esc(p.id)}', this)">show code</button>`);
+  }
+  if (actions.length) html += `<div class="actions">${actions.join('')}</div>`;
+  html += `<div class="code-slot"></div>`;
+  return html;
 }
 
-// ---- tooltip ----
-function showTooltip(e, d) {
-  const t = document.getElementById('tooltip');
-  t.style.display = 'block';
-  t.innerHTML = `<b style="color:${NODE_COLOR[d.type]||'#8b949e'}">${d.type}</b><br>${escHtml(d.id)}`;
-  const rect = document.getElementById('canvas').getBoundingClientRect();
-  t.style.left = (e.clientX - rect.left + 12) + 'px';
-  t.style.top  = (e.clientY - rect.top  + 12) + 'px';
+async function loadCode(id, btn) {
+  const slot = btn.closest('.stage, [class]') ? btn.parentElement.parentElement.querySelector('.code-slot') : null;
+  const target = slot || btn.parentElement.parentElement;
+  try {
+    const c = await api('/api/code?id=' + encodeURIComponent(id) + '&ctx=2');
+    const lines = (c.src||'').split('\n');
+    const html = lines.map((ln, i) =>
+      `<span class="ln">${String(c.start + i).padStart(4, ' ')}</span>${esc(ln)}`).join('\n');
+    const pre = document.createElement('pre');
+    pre.className = 'code';
+    pre.innerHTML = html;
+    if (target.querySelector('pre.code')) target.querySelector('pre.code').remove();
+    target.appendChild(pre);
+  } catch (e) {
+    showToast(e.message, true);
+  }
 }
-function hideTooltip() { document.getElementById('tooltip').style.display = 'none'; }
 
-// ---- init ----
-loadGraph();
+// ────────── boot ──────────
+init();
 </script>
+
 </body>
 </html>

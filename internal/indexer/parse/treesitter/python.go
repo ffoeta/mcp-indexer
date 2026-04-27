@@ -1,6 +1,7 @@
 package treesitter
 
 import (
+	"mcp-indexer/internal/common/store"
 	"mcp-indexer/internal/indexer/parse"
 	"strings"
 
@@ -18,44 +19,80 @@ func NewPython() *Parser {
 
 type pyExtractor struct{}
 
+// pyState — рабочее состояние одного файла.
+type pyState struct {
+	importMap map[string]string // alias → module (например "od" → "os.path")
+	topLevel  map[string]bool   // top-level имена (класс/функция/var)
+}
+
 func (e *pyExtractor) extract(root *sitter.Node, src []byte) *parse.ParseResult {
 	result := &parse.ParseResult{}
-	importMap := map[string]string{} // alias → module
-	localDefs := map[string]bool{}   // top-level имена для резолюции calls
-
-	// Pass 1: top-level объявления
-	for i := 0; i < int(root.NamedChildCount()); i++ {
-		node := root.NamedChild(i)
-		switch node.Type() {
-		case "import_statement":
-			e.extractImport(node, src, result, importMap)
-		case "import_from_statement":
-			e.extractFromImport(node, src, result, importMap)
-		case "class_definition":
-			e.extractClass(node, src, result, localDefs)
-		case "function_definition", "async_function_definition":
-			e.extractFunction(node, src, result, "", localDefs)
-		case "decorated_definition":
-			for j := 0; j < int(node.NamedChildCount()); j++ {
-				child := node.NamedChild(j)
-				switch child.Type() {
-				case "class_definition":
-					e.extractClass(child, src, result, localDefs)
-				case "function_definition", "async_function_definition":
-					e.extractFunction(child, src, result, "", localDefs)
-				}
-			}
-		}
+	state := &pyState{
+		importMap: map[string]string{},
+		topLevel:  map[string]bool{},
 	}
 
-	// Pass 2: call sites по всему дереву с отслеживанием scope
-	seen := map[string]bool{}
-	e.walkCalls(root, src, importMap, localDefs, result, seen, "")
+	// Synthetic module-method: к нему атрибутируем все module-level вызовы.
+	endLine := int(root.EndPoint().Row) + 1
+	if endLine < 1 {
+		endLine = 1
+	}
+	result.Methods = append(result.Methods, parse.MethodDef{
+		Name:      parse.SyntheticModuleName,
+		FQN:       parse.SyntheticModuleName,
+		Subkind:   store.SubModule,
+		Scope:     store.ScopeGlobal,
+		StartLine: 1,
+		EndLine:   endLine,
+	})
+
+	// Pass 1: top-level declarations + imports
+	for i := 0; i < int(root.NamedChildCount()); i++ {
+		e.handleTopLevel(root.NamedChild(i), src, result, state)
+	}
+
+	// Pass 2: рекурсивный обход для calls + var-types внутри функций.
+	// callerFQN на module-level — synthetic <module>.
+	callSeen := map[string]bool{}
+	e.walkBody(root, src, result, state, parse.SyntheticModuleName, callSeen)
 
 	return result
 }
 
-func (e *pyExtractor) extractImport(node *sitter.Node, src []byte, result *parse.ParseResult, importMap map[string]string) {
+// ───────── Pass 1: top-level ─────────
+
+func (e *pyExtractor) handleTopLevel(node *sitter.Node, src []byte, result *parse.ParseResult, st *pyState) {
+	switch node.Type() {
+	case "import_statement":
+		e.parseImport(node, src, result, st)
+	case "import_from_statement":
+		e.parseFromImport(node, src, result, st)
+	case "class_definition":
+		e.parseClass(node, src, result, st, "")
+	case "function_definition", "async_function_definition":
+		e.parseFunction(node, src, result, st, "" /*ownerFQN*/, store.SubFn)
+	case "decorated_definition":
+		for j := 0; j < int(node.NamedChildCount()); j++ {
+			child := node.NamedChild(j)
+			switch child.Type() {
+			case "class_definition":
+				e.parseClass(child, src, result, st, "")
+			case "function_definition", "async_function_definition":
+				e.parseFunction(child, src, result, st, "", store.SubFn)
+			}
+		}
+	case "expression_statement":
+		// аннотированное присваивание на уровне модуля: x: Foo = ...
+		for j := 0; j < int(node.NamedChildCount()); j++ {
+			ch := node.NamedChild(j)
+			if ch.Type() == "assignment" || ch.Type() == "annotated_assignment" {
+				e.collectVarType(ch, src, result, "" /*scope=file-level*/)
+			}
+		}
+	}
+}
+
+func (e *pyExtractor) parseImport(node *sitter.Node, src []byte, result *parse.ParseResult, st *pyState) {
 	for i := 0; i < int(node.ChildCount()); i++ {
 		child := node.Child(i)
 		if node.FieldNameForChild(i) != "name" {
@@ -64,9 +101,9 @@ func (e *pyExtractor) extractImport(node *sitter.Node, src []byte, result *parse
 		switch child.Type() {
 		case "dotted_name":
 			name := nodeText(child, src)
-			result.Imports = append(result.Imports, name)
 			alias := strings.SplitN(name, ".", 2)[0]
-			importMap[alias] = name
+			result.Imports = append(result.Imports, parse.ImportRef{Raw: name, Alias: alias})
+			st.importMap[alias] = name
 		case "aliased_import":
 			namePart := child.ChildByFieldName("name")
 			aliasPart := child.ChildByFieldName("alias")
@@ -74,36 +111,35 @@ func (e *pyExtractor) extractImport(node *sitter.Node, src []byte, result *parse
 				continue
 			}
 			name := nodeText(namePart, src)
-			result.Imports = append(result.Imports, name)
+			alias := strings.SplitN(name, ".", 2)[0]
 			if aliasPart != nil {
-				importMap[nodeText(aliasPart, src)] = name
-			} else {
-				importMap[strings.SplitN(name, ".", 2)[0]] = name
+				alias = nodeText(aliasPart, src)
 			}
+			result.Imports = append(result.Imports, parse.ImportRef{Raw: name, Alias: alias})
+			st.importMap[alias] = name
 		}
 	}
 }
 
-func (e *pyExtractor) extractFromImport(node *sitter.Node, src []byte, result *parse.ParseResult, importMap map[string]string) {
+func (e *pyExtractor) parseFromImport(node *sitter.Node, src []byte, result *parse.ParseResult, st *pyState) {
 	module := ""
+	hasName := false
 	for i := 0; i < int(node.ChildCount()); i++ {
 		child := node.Child(i)
 		fieldName := node.FieldNameForChild(i)
-
 		switch fieldName {
 		case "module_name":
 			module = nodeText(child, src)
-			if strings.HasPrefix(module, ".") {
-				return // пропускаем relative imports
-			}
-			result.Imports = append(result.Imports, module)
 		case "name":
 			if module == "" {
 				continue
 			}
 			switch child.Type() {
 			case "dotted_name":
-				importMap[nodeText(child, src)] = module
+				name := nodeText(child, src)
+				st.importMap[name] = module
+				result.Imports = append(result.Imports, parse.ImportRef{Raw: module, Alias: name})
+				hasName = true
 			case "aliased_import":
 				aliasPart := child.ChildByFieldName("alias")
 				namePart := child.ChildByFieldName("name")
@@ -114,160 +150,430 @@ func (e *pyExtractor) extractFromImport(node *sitter.Node, src []byte, result *p
 					effective = nodeText(namePart, src)
 				}
 				if effective != "" {
-					importMap[effective] = module
+					st.importMap[effective] = module
+					result.Imports = append(result.Imports, parse.ImportRef{Raw: module, Alias: effective})
+					hasName = true
 				}
 			}
 		}
 	}
-}
-
-func (e *pyExtractor) extractClass(node *sitter.Node, src []byte, result *parse.ParseResult, localDefs map[string]bool) {
-	nameNode := node.ChildByFieldName("name")
-	if nameNode == nil {
-		return
-	}
-	className := nodeText(nameNode, src)
-	localDefs[className] = true
-
-	var bases []string
-	superNode := node.ChildByFieldName("superclasses")
-	if superNode != nil {
-		for i := 0; i < int(superNode.NamedChildCount()); i++ {
-			bases = append(bases, nodeText(superNode.NamedChild(i), src))
-		}
-	}
-
-	result.Symbols = append(result.Symbols, parse.SymbolDef{
-		Kind:      "class",
-		Name:      className,
-		Qualified: className,
-		StartLine: int(node.StartPoint().Row) + 1,
-		EndLine:   int(node.EndPoint().Row) + 1,
-		Bases:     bases,
-	})
-
-	bodyNode := node.ChildByFieldName("body")
-	if bodyNode == nil {
-		return
-	}
-	for i := 0; i < int(bodyNode.NamedChildCount()); i++ {
-		child := bodyNode.NamedChild(i)
-		switch child.Type() {
-		case "function_definition", "async_function_definition":
-			e.extractFunction(child, src, result, className, nil)
-		case "decorated_definition":
-			for j := 0; j < int(child.NamedChildCount()); j++ {
-				def := child.NamedChild(j)
-				if def.Type() == "function_definition" || def.Type() == "async_function_definition" {
-					e.extractFunction(def, src, result, className, nil)
-				}
-			}
-		}
+	// Если from-import без явных имён (parse error / wildcard) — добавим пустой alias
+	// чтобы хотя бы file-edge на модуль создалось.
+	if module != "" && !hasName {
+		result.Imports = append(result.Imports, parse.ImportRef{Raw: module, Alias: ""})
 	}
 }
 
-func (e *pyExtractor) extractFunction(node *sitter.Node, src []byte, result *parse.ParseResult, parentName string, localDefs map[string]bool) {
+func (e *pyExtractor) parseClass(node *sitter.Node, src []byte, result *parse.ParseResult, st *pyState, parentFQN string) {
 	nameNode := node.ChildByFieldName("name")
 	if nameNode == nil {
 		return
 	}
 	name := nodeText(nameNode, src)
-	qualified := name
-	kind := "function"
-	if parentName != "" {
-		qualified = parentName + "." + name
-		kind = "method"
-	} else if localDefs != nil {
-		localDefs[name] = true
+	fqn := name
+	if parentFQN != "" {
+		fqn = parentFQN + "." + name
+	}
+	if parentFQN == "" {
+		st.topLevel[name] = true
 	}
 
-	result.Symbols = append(result.Symbols, parse.SymbolDef{
-		Kind:      kind,
+	var bases []parse.BaseRef
+	if superNode := node.ChildByFieldName("superclasses"); superNode != nil {
+		for i := 0; i < int(superNode.NamedChildCount()); i++ {
+			b := nodeText(superNode.NamedChild(i), src)
+			if b == "" {
+				continue
+			}
+			bases = append(bases, parse.BaseRef{Name: b, Relation: store.RelExtends})
+		}
+	}
+
+	startLine := int(node.StartPoint().Row) + 1
+	endLine := int(node.EndPoint().Row) + 1
+
+	body := node.ChildByFieldName("body")
+	doc := pyLeadingDoc(body, src)
+
+	result.Objects = append(result.Objects, parse.ObjectDef{
 		Name:      name,
-		Qualified: qualified,
-		Parent:    parentName,
-		StartLine: int(node.StartPoint().Row) + 1,
-		EndLine:   int(node.EndPoint().Row) + 1,
+		FQN:       fqn,
+		Subkind:   store.SubClass,
+		Bases:     bases,
+		Doc:       doc,
+		StartLine: startLine,
+		EndLine:   endLine,
 	})
+
+	// Тело класса: методы + nested классы.
+	if body == nil {
+		return
+	}
+	for i := 0; i < int(body.NamedChildCount()); i++ {
+		ch := body.NamedChild(i)
+		switch ch.Type() {
+		case "function_definition", "async_function_definition":
+			subk := store.SubMethod
+			if nm := ch.ChildByFieldName("name"); nm != nil && nodeText(nm, src) == "__init__" {
+				subk = store.SubCtor
+			}
+			e.parseFunction(ch, src, result, st, fqn, subk)
+		case "decorated_definition":
+			for j := 0; j < int(ch.NamedChildCount()); j++ {
+				def := ch.NamedChild(j)
+				if def.Type() == "function_definition" || def.Type() == "async_function_definition" {
+					e.parseFunction(def, src, result, st, fqn, store.SubMethod)
+				} else if def.Type() == "class_definition" {
+					e.parseClass(def, src, result, st, fqn)
+				}
+			}
+		case "class_definition":
+			e.parseClass(ch, src, result, st, fqn)
+		}
+	}
 }
 
-// walkCalls рекурсивно обходит дерево, отслеживая scope вызывающего символа.
-// scope — qualified name текущей функции/метода ("" = уровень файла).
-func (e *pyExtractor) walkCalls(node *sitter.Node, src []byte, importMap map[string]string, localDefs map[string]bool, result *parse.ParseResult, seen map[string]bool, scope string) {
+func (e *pyExtractor) parseFunction(node *sitter.Node, src []byte, result *parse.ParseResult, st *pyState, ownerFQN, subkind string) {
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		return
+	}
+	name := nodeText(nameNode, src)
+	fqn := name
+	scope := store.ScopeGlobal
+	if ownerFQN != "" {
+		fqn = ownerFQN + "." + name
+		scope = store.ScopeMember
+	} else {
+		st.topLevel[name] = true
+	}
+
+	startLine := int(node.StartPoint().Row) + 1
+	endLine := int(node.EndPoint().Row) + 1
+
+	body := node.ChildByFieldName("body")
+	doc := pyLeadingDoc(body, src)
+
+	sig := pySignature(node, src)
+
+	result.Methods = append(result.Methods, parse.MethodDef{
+		Name:      name,
+		FQN:       fqn,
+		OwnerFQN:  ownerFQN,
+		Subkind:   subkind,
+		Scope:     scope,
+		Signature: sig,
+		Doc:       doc,
+		StartLine: startLine,
+		EndLine:   endLine,
+	})
+
+	// Var-types из аннотированных параметров.
+	if params := node.ChildByFieldName("parameters"); params != nil {
+		e.collectParamTypes(params, src, result, fqn)
+	}
+}
+
+// ───────── Pass 2: walkBody ─────────
+
+// walkBody обходит произвольное поддерево, собирая calls и var-types
+// в текущем scope (callerFQN — FQN method/function-обёртки).
+func (e *pyExtractor) walkBody(node *sitter.Node, src []byte, result *parse.ParseResult, st *pyState, callerFQN string, callSeen map[string]bool) {
 	switch node.Type() {
-	case "call":
-		funcNode := node.ChildByFieldName("function")
-		if funcNode != nil {
-			e.resolveCall(funcNode, src, importMap, localDefs, result, seen, int(node.StartPoint().Row)+1, scope)
+	case "function_definition", "async_function_definition":
+		nm := node.ChildByFieldName("name")
+		if nm == nil {
+			return
 		}
-		// Рекурсия в аргументы (могут содержать вложенные вызовы)
-		for i := 0; i < int(node.NamedChildCount()); i++ {
-			e.walkCalls(node.NamedChild(i), src, importMap, localDefs, result, seen, scope)
+		funcName := nodeText(nm, src)
+		// Внутри тела функции callerFQN = вложенное имя.
+		// Имитируем nested-FQN: если callerFQN — synthetic <module> или функция, опускаем prefix; если класс — это уже отработано в parseClass.
+		newCaller := funcName
+		if callerFQN != parse.SyntheticModuleName && callerFQN != "" {
+			newCaller = callerFQN + "." + funcName
+		}
+		if body := node.ChildByFieldName("body"); body != nil {
+			for i := 0; i < int(body.NamedChildCount()); i++ {
+				e.walkBody(body.NamedChild(i), src, result, st, newCaller, callSeen)
+			}
 		}
 		return
 
-	case "function_definition", "async_function_definition":
-		nameNode := node.ChildByFieldName("name")
-		if nameNode != nil {
-			funcName := nodeText(nameNode, src)
-			var newScope string
-			// Если scope — имя класса (без точки), это метод
-			if scope != "" && !strings.Contains(scope, ".") {
-				newScope = scope + "." + funcName
-			} else {
-				newScope = funcName
-			}
-			for i := 0; i < int(node.NamedChildCount()); i++ {
-				e.walkCalls(node.NamedChild(i), src, importMap, localDefs, result, seen, newScope)
-			}
-			return
-		}
-
 	case "class_definition":
-		nameNode := node.ChildByFieldName("name")
-		if nameNode != nil {
-			className := nodeText(nameNode, src)
-			for i := 0; i < int(node.NamedChildCount()); i++ {
-				e.walkCalls(node.NamedChild(i), src, importMap, localDefs, result, seen, className)
-			}
+		nm := node.ChildByFieldName("name")
+		if nm == nil {
 			return
 		}
+		clsName := nodeText(nm, src)
+		newCaller := clsName
+		if callerFQN != parse.SyntheticModuleName && callerFQN != "" {
+			newCaller = callerFQN + "." + clsName
+		}
+		if body := node.ChildByFieldName("body"); body != nil {
+			for i := 0; i < int(body.NamedChildCount()); i++ {
+				e.walkBody(body.NamedChild(i), src, result, st, newCaller, callSeen)
+			}
+		}
+		return
+
+	case "call":
+		e.handleCall(node, src, result, callerFQN, callSeen)
+		// args могут содержать nested-вызовы
+		for i := 0; i < int(node.NamedChildCount()); i++ {
+			e.walkBody(node.NamedChild(i), src, result, st, callerFQN, callSeen)
+		}
+		return
+
+	case "annotated_assignment":
+		e.collectVarType(node, src, result, scopeFromCaller(callerFQN))
+	case "assignment":
+		// без аннотации — но left=Name, right=call → выводим тип, если call в importMap
+		e.collectAssignedType(node, src, result, st, scopeFromCaller(callerFQN))
 	}
 
-	// Default: рекурсия с тем же scope
+	// Default: рекурсия
 	for i := 0; i < int(node.NamedChildCount()); i++ {
-		e.walkCalls(node.NamedChild(i), src, importMap, localDefs, result, seen, scope)
+		e.walkBody(node.NamedChild(i), src, result, st, callerFQN, callSeen)
 	}
 }
 
-func (e *pyExtractor) resolveCall(funcNode *sitter.Node, src []byte, importMap map[string]string, localDefs map[string]bool, result *parse.ParseResult, seen map[string]bool, line int, caller string) {
-	name := nodeText(funcNode, src)
+func scopeFromCaller(caller string) string {
+	if caller == parse.SyntheticModuleName {
+		return ""
+	}
+	return caller
+}
 
-	// Находим корень цепочки атрибутов (для `os.path.join` корень — `os`)
-	root := funcNode
-	for root.Type() == "attribute" {
-		obj := root.ChildByFieldName("object")
-		if obj == nil {
-			break
+func (e *pyExtractor) handleCall(node *sitter.Node, src []byte, result *parse.ParseResult, callerFQN string, callSeen map[string]bool) {
+	funcNode := node.ChildByFieldName("function")
+	if funcNode == nil {
+		return
+	}
+	line := int(node.StartPoint().Row) + 1
+
+	calleeName, calleeOwner := pyCalleeParts(funcNode, src)
+	if calleeName == "" {
+		return
+	}
+
+	// Дедупликация: один callee на одного caller записывается один раз.
+	key := callerFQN + "|" + calleeOwner + "|" + calleeName
+	if callSeen[key] {
+		return
+	}
+	callSeen[key] = true
+
+	result.Calls = append(result.Calls, parse.CallRef{
+		CallerFQN:   callerFQN,
+		CalleeName:  calleeName,
+		CalleeOwner: calleeOwner,
+		Line:        line,
+	})
+}
+
+// pyCalleeParts разделяет callee-выражение на (name, owner).
+// "foo()" → ("foo", "")
+// "obj.foo()" → ("foo", "obj")
+// "a.b.foo()" → ("foo", "a.b")
+func pyCalleeParts(funcNode *sitter.Node, src []byte) (name, owner string) {
+	if funcNode.Type() == "attribute" {
+		obj := funcNode.ChildByFieldName("object")
+		attr := funcNode.ChildByFieldName("attribute")
+		if attr == nil {
+			return "", ""
 		}
-		root = obj
+		name = nodeText(attr, src)
+		if obj != nil {
+			owner = nodeText(obj, src)
+		}
+		return
 	}
-	rootName := nodeText(root, src)
+	// identifier или иной — bare call
+	return nodeText(funcNode, src), ""
+}
 
-	ref := parse.CallRef{Caller: caller, Line: line}
-	var key string
-	if mod, ok := importMap[rootName]; ok {
-		ref.Module = mod
-		key = caller + ":module:" + mod
-	} else if localDefs[name] {
-		ref.Local = name
-		key = caller + ":local:" + name
-	} else {
-		key = caller + ":unresolved:" + name
-	}
+// ───────── var-types ─────────
 
-	if !seen[key] {
-		seen[key] = true
-		result.Calls = append(result.Calls, ref)
+// collectVarType собирает тип из annotated_assignment: `x: Foo = ...` или `x: Foo`.
+func (e *pyExtractor) collectVarType(node *sitter.Node, src []byte, result *parse.ParseResult, scopeFQN string) {
+	// dive в annotated_assignment если узел — обёртка
+	if node.Type() == "expression_statement" && node.NamedChildCount() > 0 {
+		node = node.NamedChild(0)
 	}
+	if node.Type() != "annotated_assignment" {
+		return
+	}
+	target := node.ChildByFieldName("target")
+	annot := node.ChildByFieldName("type")
+	if target == nil || annot == nil {
+		return
+	}
+	if target.Type() != "identifier" {
+		return
+	}
+	varName := nodeText(target, src)
+	typeName := pyTypeName(annot, src)
+	if typeName == "" {
+		return
+	}
+	result.VarTypes = append(result.VarTypes, parse.VarType{
+		ScopeFQN: scopeFQN,
+		VarName:  varName,
+		TypeName: typeName,
+	})
+}
+
+// collectAssignedType — assignment вида `x = Foo(...)`: тип переменной = Foo (если importMap его знает).
+func (e *pyExtractor) collectAssignedType(node *sitter.Node, src []byte, result *parse.ParseResult, st *pyState, scopeFQN string) {
+	left := node.ChildByFieldName("left")
+	right := node.ChildByFieldName("right")
+	if left == nil || right == nil || left.Type() != "identifier" {
+		return
+	}
+	if right.Type() != "call" {
+		return
+	}
+	funcNode := right.ChildByFieldName("function")
+	if funcNode == nil {
+		return
+	}
+	calleeName := nodeText(funcNode, src)
+	// Берём только если это известный класс (importMap или topLevel)
+	if !st.topLevel[calleeName] {
+		if _, ok := st.importMap[calleeName]; !ok {
+			return
+		}
+	}
+	result.VarTypes = append(result.VarTypes, parse.VarType{
+		ScopeFQN: scopeFQN,
+		VarName:  nodeText(left, src),
+		TypeName: calleeName,
+	})
+}
+
+// collectParamTypes — типы параметров функции (для Pass 2 в engine).
+func (e *pyExtractor) collectParamTypes(params *sitter.Node, src []byte, result *parse.ParseResult, scopeFQN string) {
+	for i := 0; i < int(params.NamedChildCount()); i++ {
+		p := params.NamedChild(i)
+		switch p.Type() {
+		case "typed_parameter":
+			// child 0 — identifier, type field — annotation
+			var name string
+			if p.NamedChildCount() > 0 {
+				name = nodeText(p.NamedChild(0), src)
+			}
+			annot := p.ChildByFieldName("type")
+			if name == "" || annot == nil {
+				continue
+			}
+			t := pyTypeName(annot, src)
+			if t == "" {
+				continue
+			}
+			result.VarTypes = append(result.VarTypes, parse.VarType{
+				ScopeFQN: scopeFQN, VarName: name, TypeName: t,
+			})
+		case "typed_default_parameter":
+			// grammar не выставляет field "name" — берём первый named-child (identifier)
+			var name string
+			if p.NamedChildCount() > 0 && p.NamedChild(0).Type() == "identifier" {
+				name = nodeText(p.NamedChild(0), src)
+			}
+			annot := p.ChildByFieldName("type")
+			if name == "" || annot == nil {
+				continue
+			}
+			t := pyTypeName(annot, src)
+			if t == "" {
+				continue
+			}
+			result.VarTypes = append(result.VarTypes, parse.VarType{
+				ScopeFQN: scopeFQN, VarName: name, TypeName: t,
+			})
+		}
+	}
+}
+
+// pyTypeName возвращает «корневое» простое имя типа из аннотации.
+// "Foo" → "Foo"; "List[Foo]" → "List"; "pkg.Foo" → "pkg.Foo".
+func pyTypeName(annot *sitter.Node, src []byte) string {
+	switch annot.Type() {
+	case "type":
+		// wrapper-узел в parameters: разворачиваем
+		if annot.NamedChildCount() > 0 {
+			return pyTypeName(annot.NamedChild(0), src)
+		}
+	case "identifier", "dotted_name":
+		return nodeText(annot, src)
+	case "subscript":
+		// generic: "List[Foo]" — берём корневое имя
+		val := annot.ChildByFieldName("value")
+		if val != nil {
+			return pyTypeName(val, src)
+		}
+	case "attribute":
+		return nodeText(annot, src)
+	}
+	return ""
+}
+
+// ───────── helpers ─────────
+
+// pyLeadingDoc возвращает первую строку docstring тела (≤120 chars).
+func pyLeadingDoc(body *sitter.Node, src []byte) string {
+	if body == nil || body.NamedChildCount() == 0 {
+		return ""
+	}
+	first := body.NamedChild(0)
+	if first.Type() != "expression_statement" || first.NamedChildCount() == 0 {
+		return ""
+	}
+	str := first.NamedChild(0)
+	if str.Type() != "string" {
+		return ""
+	}
+	raw := nodeText(str, src)
+	return cleanDoc(raw)
+}
+
+// pySignature формирует «def name(params) -> ret» (best-effort, без тела).
+func pySignature(fn *sitter.Node, src []byte) string {
+	name := fn.ChildByFieldName("name")
+	params := fn.ChildByFieldName("parameters")
+	ret := fn.ChildByFieldName("return_type")
+	var b strings.Builder
+	if fn.Type() == "async_function_definition" {
+		b.WriteString("async ")
+	}
+	b.WriteString("def ")
+	if name != nil {
+		b.WriteString(nodeText(name, src))
+	}
+	if params != nil {
+		b.WriteString(nodeText(params, src))
+	}
+	if ret != nil {
+		b.WriteString(" -> ")
+		b.WriteString(nodeText(ret, src))
+	}
+	return b.String()
+}
+
+// cleanDoc обрезает кавычки и берёт первую непустую строку (до 120 chars).
+func cleanDoc(raw string) string {
+	s := raw
+	// Снимаем тройные/одинарные кавычки.
+	for _, q := range []string{`"""`, `'''`, `"`, `'`} {
+		s = strings.TrimPrefix(s, q)
+		s = strings.TrimSuffix(s, q)
+	}
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.TrimSpace(s)
+	if len(s) > 120 {
+		s = s[:120]
+	}
+	return s
 }

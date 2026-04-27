@@ -3,210 +3,360 @@ package engine
 import (
 	"mcp-indexer/internal/common/store"
 	"mcp-indexer/internal/common/tokenize"
+	"mcp-indexer/internal/indexer/parse"
 	"strings"
 )
 
-// ResolveResult — строки, готовые к записи в SQLite.
+// ResolveResult — готовые к записи в БД строки.
 type ResolveResult struct {
 	Files    []store.FileRow
-	Symbols  []store.SymbolRow
-	Imports  []store.ImportRow
-	Edges    []store.EdgeRow
-	Postings []store.TermPosting
+	Nodes    []store.NodeRow
+	Calls    []store.CallEdge
+	Inherits []store.InheritEdge
+	Imports  []store.ImportEdge
+	FTSDocs  []store.SearchDoc
 }
 
-// Resolve — Phase 2: преобразует CollectResult в разрешённые DB-строки.
-// Строит рёбра: defines (file→sym, class→method), imports (file→file),
-// inherits (sym→sym), calls (sym→sym, intra-file).
+// Resolve — Phase 2: преобразует CollectResult в строки БД.
+// Резолюция вызовов идёт в 3 прохода (same-file → by-import → global).
 func Resolve(cr *CollectResult, norm *tokenize.Normalizer) *ResolveResult {
 	rr := &ResolveResult{}
-	edgeSeen := map[string]bool{} // дедупликация рёбер (type:from:to)
 
-	// Per-file симвология: fileKey → {sym.Qualified → symbolID}
-	// Используется для резолюции calls (callee = local qualified)
-	fileSymMap := buildFileSymMap(cr)
-
+	// ───── files ─────
 	for _, rf := range cr.Files {
-		fid := store.FileID(rf.Key)
-		modPrefix := modulePrefix(rf.RelPath, rf.Lang)
-
-		// --- File row ---
 		rr.Files = append(rr.Files, store.FileRow{
-			FileID:  fid,
+			FileID:  rf.FileID,
+			ShortID: cr.FileShortIDs[rf.FileID],
 			Key:     rf.Key,
 			RelPath: rf.RelPath,
 			Lang:    rf.Lang,
+			Package: rf.Package,
 			Hash:    "",
 		})
+		// FTS: file
+		rr.FTSDocs = append(rr.FTSDocs, store.SearchDoc{
+			DocID:   rf.FileID,
+			DocKind: store.DocFile,
+			Path:    preTokenize(rf.RelPath, norm),
+		})
+	}
 
-		// --- Symbols + defines edges ---
-		for _, sym := range rf.Symbols {
-			fq := fullQualified(modPrefix, sym.Qualified)
-			sid := store.SymbolID(rf.Lang, fq, rf.Key, sym.StartLine)
-
-			rr.Symbols = append(rr.Symbols, store.SymbolRow{
-				SymbolID:  sid,
-				FileID:    fid,
-				Kind:      sym.Kind,
-				Name:      sym.Name,
-				Qualified: fq,
-				StartLine: sym.StartLine,
-				EndLine:   sym.EndLine,
+	// ───── objects ─────
+	for _, rf := range cr.Files {
+		for _, obj := range rf.Parsed.Objects {
+			// Каноничный nid пересчитываем по (lang, kind, fqn, key, startLine):
+			// это совпадает с ключом из Collect и однозначно идентифицирует
+			// конкретный AST-узел (важно при «наложении» FQN, например при
+			// перегрузках конструкторов в Java).
+			nid := store.NodeID(rf.Lang, store.KindObject, obj.FQN, rf.Key, obj.StartLine)
+			rr.Nodes = append(rr.Nodes, store.NodeRow{
+				NodeID:    nid,
+				ShortID:   cr.NodeShortIDs[nid],
+				FileID:    rf.FileID,
+				Kind:      store.KindObject,
+				Subkind:   obj.Subkind,
+				Name:      obj.Name,
+				FQN:       obj.FQN,
+				OwnerID:   "", // объекты сами могут быть owner-ами; nested через owner_id ниже
+				Scope:     store.ScopeGlobal,
+				Doc:       obj.Doc,
+				StartLine: obj.StartLine,
+				EndLine:   obj.EndLine,
 			})
+			rr.FTSDocs = append(rr.FTSDocs, store.SearchDoc{
+				DocID:   nid,
+				DocKind: store.DocNode,
+				Name:    preTokenize(obj.Name, norm),
+				FQN:     preTokenize(obj.FQN, norm),
+				Path:    preTokenize(rf.RelPath, norm),
+			})
+		}
+	}
 
-			// file → symbol (defines)
-			addEdge(rr, edgeSeen, "defines", fid, sid, 100)
+	// nested objects: object.owner_id = parent object (если parent object same file)
+	for i := range rr.Nodes {
+		n := &rr.Nodes[i]
+		if n.Kind != store.KindObject {
+			continue
+		}
+		// parent — strip last segment if exists и matches существующему object
+		parentFQN := stripLastSegment(n.FQN)
+		if parentFQN == "" {
+			continue
+		}
+		if pid, ok := cr.ObjectFQNs[parentFQN]; ok {
+			n.OwnerID = pid
+		}
+	}
 
-			// class → method (defines)
-			if sym.Parent != "" {
-				parentFQ := fullQualified(modPrefix, sym.Parent)
-				if entry, ok := cr.DefinedMap[parentFQ]; ok {
-					parentSID := store.SymbolID(rf.Lang, parentFQ, entry.FileKey, entry.Line)
-					addEdge(rr, edgeSeen, "defines", parentSID, sid, 100)
+	// ───── methods ─────
+	for _, rf := range cr.Files {
+		for _, m := range rf.Parsed.Methods {
+			// nid строим напрямую из (lang, kind, fqn, key, startLine) — иначе
+			// перегрузки (одинаковый FQN, разные строки, e.g. два Java-ctor)
+			// получили бы одинаковый short_id и упёрлись в UNIQUE-constraint.
+			mid := store.NodeID(rf.Lang, store.KindMethod, m.FQN, rf.Key, m.StartLine)
+			ownerID := ""
+			if m.OwnerFQN != "" {
+				if oid, ok := cr.ObjectFQNs[m.OwnerFQN]; ok {
+					ownerID = oid
 				}
 			}
-
-			// symbol → symbol (inherits)
-			for _, base := range sym.Bases {
-				baseFQ := resolveBase(base, modPrefix, cr.DefinedMap)
-				if baseFQ == "" {
-					continue
-				}
-				entry := cr.DefinedMap[baseFQ]
-				baseSID := store.SymbolID(rf.Lang, baseFQ, entry.FileKey, entry.Line)
-				addEdge(rr, edgeSeen, "inherits", sid, baseSID, 100)
-			}
-
-			// term_postings для символа
-			rr.Postings = append(rr.Postings, buildSymPostings(sid, sym.Name, fq, norm)...)
+			rr.Nodes = append(rr.Nodes, store.NodeRow{
+				NodeID:    mid,
+				ShortID:   cr.NodeShortIDs[mid],
+				FileID:    rf.FileID,
+				Kind:      store.KindMethod,
+				Subkind:   m.Subkind,
+				Name:      m.Name,
+				FQN:       m.FQN,
+				OwnerID:   ownerID,
+				Scope:     m.Scope,
+				Signature: m.Signature,
+				Doc:       m.Doc,
+				StartLine: m.StartLine,
+				EndLine:   m.EndLine,
+			})
+			rr.FTSDocs = append(rr.FTSDocs, store.SearchDoc{
+				DocID:   mid,
+				DocKind: store.DocNode,
+				Name:    preTokenize(m.Name, norm),
+				FQN:     preTokenize(m.FQN, norm),
+				Path:    preTokenize(rf.RelPath, norm),
+			})
 		}
+	}
 
-		// --- Imports rows + imports edges ---
-		for _, imp := range rf.Imports {
-			rr.Imports = append(rr.Imports, store.ImportRow{FileID: fid, Imp: imp})
-			if targetKey, ok := cr.FileModuleMap[imp]; ok {
-				addEdge(rr, edgeSeen, "imports", fid, store.FileID(targetKey), 100)
-			}
-		}
-
-		// --- Calls edges (intra-file, оба символа должны быть в defined_map) ---
-		localSyms := fileSymMap[rf.Key] // sym.Qualified → symbolID
-		for _, call := range rf.Calls {
-			if call.Caller == "" || call.Local == "" {
-				continue
-			}
-			callerFQ := fullQualified(modPrefix, call.Caller)
-			callerEntry, ok := cr.DefinedMap[callerFQ]
+	// ───── calls ─────
+	for _, rf := range cr.Files {
+		for _, c := range rf.Parsed.Calls {
+			callerID, ok := cr.MethodFQNs[c.CallerFQN]
 			if !ok {
-				continue
+				continue // caller вне индекса — отбрасываем (не должно случаться)
 			}
-			callerSID := store.SymbolID(rf.Lang, callerFQ, callerEntry.FileKey, callerEntry.Line)
-
-			calleeSID := resolveLocalCallee(call.Local, call.Caller, rf.Lang, localSyms)
-			if calleeSID == "" {
-				continue
-			}
-			addEdge(rr, edgeSeen, "calls", callerSID, calleeSID, 90)
+			calleeID, conf := resolveCall(c, rf, cr)
+			rr.Calls = append(rr.Calls, store.CallEdge{
+				CallerID:    callerID,
+				CalleeID:    calleeID,
+				CalleeName:  c.CalleeName,
+				CalleeOwner: c.CalleeOwner,
+				Line:        c.Line,
+				Confidence:  conf,
+			})
 		}
+	}
 
-		// term_postings для файла
-		rr.Postings = append(rr.Postings, buildFilePostings(fid, rf.Key, norm)...)
+	// ───── inherits ─────
+	for _, rf := range cr.Files {
+		for _, obj := range rf.Parsed.Objects {
+			childID := store.NodeID(rf.Lang, store.KindObject, obj.FQN, rf.Key, obj.StartLine)
+			modPrefix := modulePrefix(rf.RelPath, rf.Lang)
+			for _, base := range obj.Bases {
+				parentID := resolveInherit(base.Name, modPrefix, rf, cr)
+				rr.Inherits = append(rr.Inherits, store.InheritEdge{
+					ChildID:    childID,
+					ParentID:   parentID,
+					ParentHint: base.Name,
+					Relation:   base.Relation,
+				})
+			}
+		}
+	}
+
+	// ───── imports (дедупим per-file по Raw) ─────
+	for _, rf := range cr.Files {
+		seen := map[string]bool{}
+		for _, imp := range rf.Parsed.Imports {
+			if seen[imp.Raw] {
+				continue
+			}
+			seen[imp.Raw] = true
+			tgt := cr.FileByImport[imp.Raw]
+			rr.Imports = append(rr.Imports, store.ImportEdge{
+				FileID:       rf.FileID,
+				TargetFileID: tgt,
+				Raw:          imp.Raw,
+			})
+		}
 	}
 
 	return rr
 }
 
-// buildFileSymMap строит per-file карту: fileKey → {sym.Qualified → symbolID}.
-// Qualified здесь — без модульного префикса (как в парсере).
-func buildFileSymMap(cr *CollectResult) map[string]map[string]string {
-	m := make(map[string]map[string]string, len(cr.Files))
-	for _, rf := range cr.Files {
-		local := make(map[string]string, len(rf.Symbols))
-		modPrefix := modulePrefix(rf.RelPath, rf.Lang)
-		for _, sym := range rf.Symbols {
-			fq := fullQualified(modPrefix, sym.Qualified)
-			local[sym.Qualified] = store.SymbolID(rf.Lang, fq, rf.Key, sym.StartLine)
-		}
-		m[rf.Key] = local
+// resolveCall — три прохода.
+// Возвращает (calleeNodeID, confidence). NodeID="" → unresolved.
+func resolveCall(c parse.CallRef, rf *RawFile, cr *CollectResult) (string, int) {
+	// Pass 1: same-file
+	if id := pass1SameFile(c, rf, cr); id != "" {
+		return id, store.ConfSameFile
 	}
-	return m
+	// Pass 2: by-import / var-types
+	if id := pass2ByImport(c, rf, cr); id != "" {
+		return id, store.ConfImport
+	}
+	// Pass 3: global by simple name
+	if id := pass3Global(c, cr); id != "" {
+		return id, store.ConfGlobal
+	}
+	return "", store.ConfNone
 }
 
-// resolveBase ищет базовый класс в defined_map.
-// Пробует: точное совпадение, затем с модульным префиксом текущего файла.
-func resolveBase(base, modPrefix string, definedMap map[string]DefinedEntry) string {
-	if _, ok := definedMap[base]; ok {
-		return base
+// pass1SameFile резолвит вызовы внутри одного файла.
+//   - bare (CalleeOwner==""): ищем method того же owner-class что и caller; иначе top-level в файле
+//   - CalleeOwner совпадает с object в этом же файле: ищем method (owner=CalleeOwner, name=callee)
+func pass1SameFile(c parse.CallRef, rf *RawFile, cr *CollectResult) string {
+	if c.CalleeOwner == "" {
+		// caller's class — strip last segment
+		callerOwner := stripLastSegment(c.CallerFQN)
+		if callerOwner != "" {
+			if methods, ok := cr.OwnerToMethods[callerOwner]; ok {
+				if id, ok := methods[c.CalleeName]; ok {
+					return id
+				}
+			}
+		}
+		// top-level в файле (методы без owner)
+		if fileMethods, ok := cr.FileToMethods[rf.FileID]; ok {
+			if id, ok := fileMethods[c.CalleeName]; ok {
+				// убедимся что это owner-less метод
+				return id
+			}
+		}
+		return ""
 	}
-	if modPrefix != "" {
-		fq := modPrefix + "." + base
-		if _, ok := definedMap[fq]; ok {
-			return fq
+	// CalleeOwner — простое имя класса в том же файле?
+	for _, obj := range rf.Parsed.Objects {
+		if obj.Name == c.CalleeOwner {
+			if methods, ok := cr.OwnerToMethods[obj.FQN]; ok {
+				if id, ok := methods[c.CalleeName]; ok {
+					return id
+				}
+			}
 		}
 	}
 	return ""
 }
 
-// resolveLocalCallee возвращает symbolID для intra-file callee.
-// Python: call.Local — простое имя (top-level) → ключ в localSyms.
-// Java: call.Local — имя метода, call.Caller = "ClassName.method" → callee = "ClassName.calleeMethod".
-func resolveLocalCallee(calleeLocal, callerQualified, lang string, localSyms map[string]string) string {
-	switch lang {
-	case "java":
-		// Извлекаем класс из caller: "ClassName.method" → "ClassName"
-		dot := strings.Index(callerQualified, ".")
-		if dot < 0 {
-			return ""
-		}
-		callerClass := callerQualified[:dot]
-		calleeFull := callerClass + "." + calleeLocal
-		return localSyms[calleeFull]
-	default: // python
-		return localSyms[calleeLocal]
+// pass2ByImport резолвит callee_owner через VarTypes (simple name → typeFQN) либо через importMap.
+//
+// Учитывает асимметрию импортов:
+//   - Java: import com.x.OrderRepo  → importMap["OrderRepo"] = "com.x.OrderRepo" (FQN класса).
+//   - Python from-import: from pkg.repo import OrderRepo
+//     → importMap["OrderRepo"] = "pkg.repo" (модуль). Класс FQN = модуль + "." + alias.
+//
+// Поэтому для каждого кандидата пробуем сначала точный FQN, потом модуль.член.
+func pass2ByImport(c parse.CallRef, rf *RawFile, cr *CollectResult) string {
+	if c.CalleeOwner == "" {
+		return ""
 	}
-}
 
-func addEdge(rr *ResolveResult, seen map[string]bool, typ, from, to string, conf int) {
-	key := typ + ":" + from + ":" + to
-	if seen[key] {
-		return
-	}
-	seen[key] = true
-	rr.Edges = append(rr.Edges, store.EdgeRow{
-		Type:       typ,
-		FromID:     from,
-		ToID:       to,
-		Confidence: conf,
-	})
-}
+	// Кандидаты на тип callee_owner-а (порядок имеет значение: чем раньше — тем точнее).
+	var candidates []string
 
-func buildSymPostings(sid, name, qualified string, norm *tokenize.Normalizer) []store.TermPosting {
-	var out []store.TermPosting
-	for _, term := range norm.Tokenize(name) {
-		out = append(out, store.TermPosting{Term: term, DocID: sid, Weight: 100})
-	}
-	// Qualified добавляет токены с меньшим весом (только уникальные)
-	nameToks := toSet(norm.Tokenize(name))
-	for _, term := range norm.Tokenize(qualified) {
-		if !nameToks[term] {
-			out = append(out, store.TermPosting{Term: term, DocID: sid, Weight: 80})
+	// 1) Type variable из VarTypes (locals/params/fields).
+	if t := varLookup(c.CallerFQN, c.CalleeOwner, cr.VarTypes); t != "" {
+		candidates = append(candidates, t)
+		if mapped, ok := rf.ImportMap[t]; ok {
+			candidates = append(candidates, mapped)            // Java-style: FQN класса
+			candidates = append(candidates, mapped+"."+t)       // Python-style: модуль + класс
 		}
 	}
-	return out
+
+	// 2) callee_owner сам по себе может быть alias класса (через import).
+	if mapped, ok := rf.ImportMap[c.CalleeOwner]; ok {
+		candidates = append(candidates, mapped)
+		candidates = append(candidates, mapped+"."+c.CalleeOwner)
+	}
+
+	// 3) callee_owner может быть напрямую FQN или local class name → FQN.
+	candidates = append(candidates, c.CalleeOwner)
+
+	for _, fqn := range candidates {
+		if methods, ok := cr.OwnerToMethods[fqn]; ok {
+			if id, ok := methods[c.CalleeName]; ok {
+				return id
+			}
+		}
+	}
+	return ""
 }
 
-func buildFilePostings(fid, key string, norm *tokenize.Normalizer) []store.TermPosting {
-	var out []store.TermPosting
-	for _, term := range norm.Tokenize(key) {
-		out = append(out, store.TermPosting{Term: term, DocID: fid, Weight: 40})
+// pass3Global линкует если есть ровно одно совпадение по simple name.
+func pass3Global(c parse.CallRef, cr *CollectResult) string {
+	candidates := cr.NameToMethods[c.CalleeName]
+	if len(candidates) != 1 {
+		return ""
 	}
-	return out
+	return candidates[0]
 }
 
-func toSet(terms []string) map[string]bool {
-	s := make(map[string]bool, len(terms))
-	for _, t := range terms {
-		s[t] = true
+// varLookup — поиск типа переменной по cascade scope.
+func varLookup(callerFQN, varName string, varTypes map[string]map[string]string) string {
+	if scope, ok := varTypes[callerFQN]; ok {
+		if t, ok := scope[varName]; ok {
+			return t
+		}
 	}
-	return s
+	// owner-scope (class fields, видны во всех методах класса)
+	if owner := stripLastSegment(callerFQN); owner != "" {
+		if scope, ok := varTypes[owner]; ok {
+			if t, ok := scope[varName]; ok {
+				return t
+			}
+		}
+	}
+	// file-scope (modulePrefix.<module> → ScopeFQN="" в Python после canonicalize? Нет, Python module-level имеет caller=<module>, ScopeFQN тоже caller-FQN)
+	// Заглушка: scope с пустым ключом
+	if scope, ok := varTypes[""]; ok {
+		if t, ok := scope[varName]; ok {
+			return t
+		}
+	}
+	return ""
+}
+
+// resolveInherit резолвит base hint в objectID.
+func resolveInherit(hint, modPrefix string, rf *RawFile, cr *CollectResult) string {
+	// 1) точное совпадение (Java import-resolved или fully qualified)
+	if id, ok := cr.ObjectFQNs[hint]; ok {
+		return id
+	}
+	// 2) modulePrefix + hint (intra-package для Python)
+	if modPrefix != "" {
+		if id, ok := cr.ObjectFQNs[modPrefix+"."+hint]; ok {
+			return id
+		}
+	}
+	// 3) через importMap файла
+	if fqn, ok := rf.ImportMap[hint]; ok {
+		if id, ok := cr.ObjectFQNs[fqn]; ok {
+			return id
+		}
+	}
+	// 4) глобально по simple name (если уникально)
+	if cands := cr.NameToObjects[hint]; len(cands) == 1 {
+		return cands[0]
+	}
+	return ""
+}
+
+// preTokenize применяет нормализатор и склеивает в одну строку (для FTS5).
+func preTokenize(s string, norm *tokenize.Normalizer) string {
+	return strings.Join(norm.Tokenize(s), " ")
+}
+
+func stripLastSegment(fqn string) string {
+	i := strings.LastIndex(fqn, ".")
+	if i < 0 {
+		return ""
+	}
+	return fqn[:i]
+}
+
+func lastSegment(fqn string) string {
+	i := strings.LastIndex(fqn, ".")
+	if i < 0 {
+		return fqn
+	}
+	return fqn[i+1:]
 }
