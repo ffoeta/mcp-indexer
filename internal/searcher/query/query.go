@@ -773,6 +773,171 @@ func ListFiles(db *sql.DB) ([]FileTreeRow, error) {
 	return out, rows.Err()
 }
 
+// ───────── graph ─────────
+
+// GraphNode — узел графа (file / object / method).
+type GraphNode struct {
+	Kind    string // "file" | "object" | "method"
+	ShortID int64
+	Name    string // для file — basename; для node — name
+	Path    string // rel_path: для file — путь файла; для node — путь файла-владельца
+	Lang    string
+	Subkind string // только для node
+	Line    int    // start_line для node
+	OwnerID int64  // для node — short_id владельца (object), 0 если нет
+	FileID  int64  // для node — short_id файла, в котором лежит
+}
+
+// GraphEdge — ребро графа.
+// FromKind/ToKind — "file" | "node" (для построения short-id префикса в App).
+type GraphEdge struct {
+	FromKind string
+	FromID   int64
+	ToKind   string
+	ToID     int64
+	Type     string // "calls" | "inherits" | "imports" | "defines"
+	Relation string // для inherits: extends | implements
+}
+
+// GraphData — узлы и рёбра.
+type GraphData struct {
+	Nodes []GraphNode
+	Edges []GraphEdge
+}
+
+// LoadGraph выгружает полный граф сервиса.
+// Включает: все files, все nodes, рёбра calls/inherits/imports (только resolved), defines (file→node, object→method).
+func LoadGraph(db *sql.DB) (*GraphData, error) {
+	g := &GraphData{}
+
+	// files
+	frows, err := db.Query(`SELECT short_id, rel_path, lang FROM files`)
+	if err != nil {
+		return nil, fmt.Errorf("graph files: %w", err)
+	}
+	for frows.Next() {
+		var n GraphNode
+		n.Kind = "file"
+		if err := frows.Scan(&n.ShortID, &n.Path, &n.Lang); err != nil {
+			frows.Close()
+			return nil, err
+		}
+		// basename
+		if i := strings.LastIndex(n.Path, "/"); i >= 0 {
+			n.Name = n.Path[i+1:]
+		} else {
+			n.Name = n.Path
+		}
+		g.Nodes = append(g.Nodes, n)
+	}
+	frows.Close()
+
+	// nodes (object|method) с file_id и owner_id, через JOIN получаем short_id связанных
+	nrows, err := db.Query(`
+		SELECT n.short_id, n.kind, n.subkind, n.name, n.start_line,
+		       f.short_id, f.rel_path,
+		       COALESCE(o.short_id, 0)
+		FROM nodes n
+		JOIN files f ON f.file_id = n.file_id
+		LEFT JOIN nodes o ON o.node_id = n.owner_id
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("graph nodes: %w", err)
+	}
+	for nrows.Next() {
+		var n GraphNode
+		if err := nrows.Scan(&n.ShortID, &n.Kind, &n.Subkind, &n.Name, &n.Line,
+			&n.FileID, &n.Path, &n.OwnerID); err != nil {
+			nrows.Close()
+			return nil, err
+		}
+		g.Nodes = append(g.Nodes, n)
+		// defines edge: owner → node (если owner есть, иначе file → node)
+		if n.OwnerID != 0 {
+			g.Edges = append(g.Edges, GraphEdge{
+				FromKind: "node", FromID: n.OwnerID,
+				ToKind: "node", ToID: n.ShortID,
+				Type: "defines",
+			})
+		} else {
+			g.Edges = append(g.Edges, GraphEdge{
+				FromKind: "file", FromID: n.FileID,
+				ToKind: "node", ToID: n.ShortID,
+				Type: "defines",
+			})
+		}
+	}
+	nrows.Close()
+
+	// calls (resolved only)
+	crows, err := db.Query(`
+		SELECT n1.short_id, n2.short_id
+		FROM edges_calls e
+		JOIN nodes n1 ON n1.node_id = e.caller_id
+		JOIN nodes n2 ON n2.node_id = e.callee_id
+		WHERE e.callee_id IS NOT NULL
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("graph calls: %w", err)
+	}
+	for crows.Next() {
+		var e GraphEdge
+		e.FromKind, e.ToKind, e.Type = "node", "node", "calls"
+		if err := crows.Scan(&e.FromID, &e.ToID); err != nil {
+			crows.Close()
+			return nil, err
+		}
+		g.Edges = append(g.Edges, e)
+	}
+	crows.Close()
+
+	// inherits (resolved only)
+	irows, err := db.Query(`
+		SELECT n1.short_id, n2.short_id, e.relation
+		FROM edges_inherits e
+		JOIN nodes n1 ON n1.node_id = e.child_id
+		JOIN nodes n2 ON n2.node_id = e.parent_id
+		WHERE e.parent_id IS NOT NULL
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("graph inherits: %w", err)
+	}
+	for irows.Next() {
+		var e GraphEdge
+		e.FromKind, e.ToKind, e.Type = "node", "node", "inherits"
+		if err := irows.Scan(&e.FromID, &e.ToID, &e.Relation); err != nil {
+			irows.Close()
+			return nil, err
+		}
+		g.Edges = append(g.Edges, e)
+	}
+	irows.Close()
+
+	// imports (resolved only)
+	mrows, err := db.Query(`
+		SELECT f1.short_id, f2.short_id
+		FROM edges_imports e
+		JOIN files f1 ON f1.file_id = e.file_id
+		JOIN files f2 ON f2.file_id = e.target_file_id
+		WHERE e.target_file_id IS NOT NULL
+	`)
+	if err != nil {
+		return nil, fmt.Errorf("graph imports: %w", err)
+	}
+	for mrows.Next() {
+		var e GraphEdge
+		e.FromKind, e.ToKind, e.Type = "file", "file", "imports"
+		if err := mrows.Scan(&e.FromID, &e.ToID); err != nil {
+			mrows.Close()
+			return nil, err
+		}
+		g.Edges = append(g.Edges, e)
+	}
+	mrows.Close()
+
+	return g, nil
+}
+
 // ───────── stats ─────────
 
 func GetStats(db *sql.DB) (*Stats, error) {

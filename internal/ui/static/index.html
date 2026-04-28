@@ -236,6 +236,61 @@
     font-size: 11px; display: none; z-index: 1000;
   }
 
+  /* ---- graph mode ---- */
+  #graph-mode { flex: 1; display: flex; min-height: 0; }
+  #graph-side {
+    width: 250px; min-width: 200px; max-width: 40%;
+    background: var(--bg2); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .gsec { padding: 10px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .gsec h4 {
+    font-size: 10px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 8px;
+  }
+  .gsec .row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; font-size: 11px; cursor: pointer; user-select: none; }
+  .gsec .row input { accent-color: var(--accent2); cursor: pointer; }
+  .gsec .row .swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .gsec .row .line   { width: 16px; height: 2px; flex-shrink: 0; }
+  .gsec .stat { font-size: 10px; color: var(--muted); }
+  #graph-side input[type=text] {
+    width: 100%; padding: 5px 8px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 4px; font-family: inherit; font-size: 11px;
+  }
+  #graph-side input[type=text]:focus { outline: none; border-color: var(--accent); }
+  #graph-side button {
+    width: 100%; padding: 5px 8px; margin-top: 6px; background: var(--accent2); color: #fff;
+    border: 1px solid var(--accent2); border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 11px;
+  }
+  #graph-side button.secondary { background: var(--bg); color: var(--fg); border-color: var(--border); }
+  #graph-side button.secondary:hover { border-color: var(--muted); }
+  #graph-info { flex: 1; overflow-y: auto; }
+  #graph-info .empty { padding: 10px 12px; }
+  #graph-info .kv { padding: 10px 12px; }
+
+  #graph-canvas { flex: 1; position: relative; overflow: hidden; background: var(--bg); }
+  #graph-canvas svg { width: 100%; height: 100%; cursor: grab; display: block; }
+  #graph-canvas svg:active { cursor: grabbing; }
+  .gnode circle { stroke: var(--bg2); stroke-width: 1.5; cursor: pointer; }
+  .gnode circle:hover { stroke: var(--fg); stroke-width: 2.5; }
+  .gnode text { font-size: 9px; fill: var(--muted); pointer-events: none; user-select: none; }
+  .gnode.selected circle { stroke: #f0f6fc !important; stroke-width: 3 !important; }
+  .gnode.dimmed { opacity: 0.12; }
+  .glink { fill: none; stroke-opacity: 0.5; }
+  .glink.dimmed { opacity: 0.05; }
+  #graph-loading {
+    position: absolute; inset: 0; background: rgba(13,17,23,.75);
+    display: none; align-items: center; justify-content: center;
+    font-size: 12px; color: var(--muted); z-index: 10;
+  }
+  #graph-loading.on { display: flex; }
+  #graph-status {
+    position: absolute; left: 8px; bottom: 8px; padding: 4px 8px;
+    background: rgba(22,27,34,.85); border: 1px solid var(--border);
+    border-radius: 4px; font-size: 10px; color: var(--muted); z-index: 5;
+    pointer-events: none;
+  }
+
   /* ---- file overview (tree mode right pane) ---- */
   .file-section { margin-top: 14px; }
   .file-section h4 {
@@ -264,6 +319,7 @@
     <button class="tab" id="tab-launcher" onclick="setMode('launcher')">⌂ Start</button>
     <button class="tab" id="tab-tree" onclick="setMode('tree')">▤ Tree</button>
     <button class="tab" id="tab-pipeline" onclick="setMode('pipeline')">→ Pipeline</button>
+    <button class="tab" id="tab-graph" onclick="setMode('graph')">◌ Graph</button>
   </div>
 </header>
 
@@ -292,6 +348,15 @@
         </p>
         <p style="margin-top:8px">Best for: tracing flows, finding callers, reverse-engineering behavior.</p>
       </div>
+      <div class="lcard" onclick="setMode('graph')">
+        <h2>◌ Graph</h2>
+        <p>
+          <span class="step">Force-directed visualization</span> of the whole index:
+          files, classes and methods linked by calls / inherits / imports / defines.
+          Filter edge types, focus on a node, click to peek.
+        </p>
+        <p style="margin-top:8px">Best for: birds-eye view of structure and dependencies.</p>
+      </div>
     </div>
   </section>
 
@@ -305,6 +370,44 @@
     </aside>
     <div id="tree-detail">
       <div class="empty">Select a file on the left to view its overview.</div>
+    </div>
+  </section>
+
+  <!-- GRAPH -->
+  <section id="graph-mode" style="display:none">
+    <aside id="graph-side">
+      <div class="gsec">
+        <h4>Focus</h4>
+        <input id="g-focus" type="text" placeholder="short-id (m12, o3, f5) or empty…" onkeydown="if(event.key==='Enter')graphApplyFocus()">
+        <div class="row" style="margin-top:6px;gap:4px">
+          <input id="g-focus-depth" type="text" value="2" style="width:40px;text-align:center">
+          <span class="stat">depth (1–4)</span>
+        </div>
+        <button onclick="graphApplyFocus()">Focus</button>
+        <button class="secondary" onclick="graphClearFocus()">Show full</button>
+      </div>
+      <div class="gsec">
+        <h4>Edge types</h4>
+        <label class="row"><input type="checkbox" data-edge="calls"    checked onchange="graphRender()"><span class="line" style="background:var(--accent)"></span>calls</label>
+        <label class="row"><input type="checkbox" data-edge="inherits" checked onchange="graphRender()"><span class="line" style="background:var(--purple)"></span>inherits</label>
+        <label class="row"><input type="checkbox" data-edge="imports"  checked onchange="graphRender()"><span class="line" style="background:var(--orange)"></span>imports</label>
+        <label class="row"><input type="checkbox" data-edge="defines"          onchange="graphRender()"><span class="line" style="background:var(--muted)"></span>defines</label>
+      </div>
+      <div class="gsec">
+        <h4>Node types</h4>
+        <label class="row"><input type="checkbox" data-kind="file"   checked onchange="graphRender()"><span class="swatch" style="background:var(--accent)"></span>files</label>
+        <label class="row"><input type="checkbox" data-kind="object" checked onchange="graphRender()"><span class="swatch" style="background:var(--yellow)"></span>objects</label>
+        <label class="row"><input type="checkbox" data-kind="method" checked onchange="graphRender()"><span class="swatch" style="background:var(--green)"></span>methods</label>
+      </div>
+      <div class="gsec">
+        <h4>Selected</h4>
+        <div id="graph-info"><div class="empty">click a node to inspect</div></div>
+      </div>
+    </aside>
+    <div id="graph-canvas">
+      <svg></svg>
+      <div id="graph-status"></div>
+      <div id="graph-loading">loading graph…</div>
     </div>
   </section>
 
@@ -328,6 +431,7 @@
 
 <div id="toast"></div>
 
+<script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // ────────── state ──────────
 const state = {
@@ -338,6 +442,13 @@ const state = {
   selectedFilePath: null,
   pipeline: {
     history: [],          // [{label, type:'search'|'peek'|'walk', payload}]
+  },
+  graph: {
+    raw: null,            // {nodes, edges} raw from API
+    sim: null,            // d3 simulation
+    selectedID: null,     // currently selected node id
+    focusID: null,        // focused root (or null = full graph)
+    focusDepth: 2,
   },
 };
 
@@ -368,11 +479,12 @@ function kindClass(k) { return 'kind-' + k; }
 
 // ────────── mode switching ──────────
 function setMode(m) {
-  ['launcher','tree','pipeline'].forEach(name => {
+  ['launcher','tree','pipeline','graph'].forEach(name => {
     $(name === 'launcher' ? 'launcher' : name + '-mode').style.display = (name === m) ? '' : 'none';
     $('tab-' + name).classList.toggle('active', name === m);
   });
   if (m === 'tree' && !state.treeFiles) loadTree();
+  if (m === 'graph' && !state.graph.raw) loadGraph();
 }
 
 // ────────── header / launcher init ──────────
@@ -850,6 +962,270 @@ async function loadCode(id, btn) {
   } catch (e) {
     showToast(e.message, true);
   }
+}
+
+// ────────── graph mode ──────────
+const GRAPH_COLORS = {
+  file:   '#58a6ff',
+  object: '#d29922',
+  method: '#3fb950',
+};
+const EDGE_COLORS = {
+  calls:    '#58a6ff',
+  inherits: '#bc8cff',
+  imports:  '#f78166',
+  defines:  '#6e7681',
+};
+
+async function loadGraph() {
+  const loading = $('graph-loading');
+  loading.classList.add('on');
+  try {
+    const data = await api('/api/graph');
+    state.graph.raw = data;
+    graphRender();
+  } catch (e) {
+    showToast(e.message, true);
+    $('graph-status').textContent = 'error: ' + e.message;
+  } finally {
+    loading.classList.remove('on');
+  }
+}
+
+function graphActiveEdgeTypes() {
+  const set = new Set();
+  document.querySelectorAll('#graph-side input[data-edge]').forEach(i => {
+    if (i.checked) set.add(i.dataset.edge);
+  });
+  return set;
+}
+function graphActiveNodeKinds() {
+  const set = new Set();
+  document.querySelectorAll('#graph-side input[data-kind]').forEach(i => {
+    if (i.checked) set.add(i.dataset.kind);
+  });
+  return set;
+}
+
+function graphApplyFocus() {
+  const v = $('g-focus').value.trim();
+  const d = parseInt($('g-focus-depth').value, 10);
+  state.graph.focusID = v || null;
+  state.graph.focusDepth = (isFinite(d) && d > 0 && d <= 6) ? d : 2;
+  graphRender();
+}
+function graphClearFocus() {
+  state.graph.focusID = null;
+  $('g-focus').value = '';
+  graphRender();
+}
+
+// BFS from focusID using current edge filter, up to depth.
+function graphBFS(nodes, edges, rootID, depth) {
+  const adj = new Map(); // id -> [otherID]
+  for (const e of edges) {
+    if (!adj.has(e.from)) adj.set(e.from, []);
+    if (!adj.has(e.to))   adj.set(e.to,   []);
+    adj.get(e.from).push(e.to);
+    adj.get(e.to).push(e.from);
+  }
+  const seen = new Set();
+  if (!adj.has(rootID) && !nodes.find(n => n.id === rootID)) return null;
+  seen.add(rootID);
+  let frontier = [rootID];
+  for (let i = 0; i < depth; i++) {
+    const next = [];
+    for (const id of frontier) {
+      const nbrs = adj.get(id) || [];
+      for (const nb of nbrs) {
+        if (!seen.has(nb)) { seen.add(nb); next.push(nb); }
+      }
+    }
+    frontier = next;
+    if (!frontier.length) break;
+  }
+  return seen;
+}
+
+function graphRender() {
+  const raw = state.graph.raw;
+  if (!raw) return;
+
+  const edgeTypes = graphActiveEdgeTypes();
+  const nodeKinds = graphActiveNodeKinds();
+
+  // Filter nodes by kind.
+  let nodes = raw.nodes.filter(n => nodeKinds.has(n.k));
+  const allowedIDs = new Set(nodes.map(n => n.id));
+  // Filter edges by type AND endpoints alive.
+  let edges = raw.edges.filter(e => edgeTypes.has(e.t) && allowedIDs.has(e.from) && allowedIDs.has(e.to));
+
+  // Focus mode: BFS subgraph.
+  if (state.graph.focusID) {
+    const reachable = graphBFS(nodes, edges, state.graph.focusID, state.graph.focusDepth);
+    if (!reachable) {
+      $('graph-status').textContent = `focus node "${state.graph.focusID}" not found`;
+      d3.select('#graph-canvas svg').selectAll('*').remove();
+      return;
+    }
+    nodes = nodes.filter(n => reachable.has(n.id));
+    const ok = new Set(nodes.map(n => n.id));
+    edges = edges.filter(e => ok.has(e.from) && ok.has(e.to));
+  }
+
+  // Drop disconnected nodes when focus is set; in full mode keep them.
+  $('graph-status').textContent = `${nodes.length} nodes · ${edges.length} edges`
+    + (state.graph.focusID ? ` · focus ${state.graph.focusID} d=${state.graph.focusDepth}` : '');
+
+  graphDraw(nodes, edges);
+}
+
+function graphDraw(nodesIn, edgesIn) {
+  const svgEl = document.querySelector('#graph-canvas svg');
+  const w = svgEl.clientWidth || 800;
+  const h = svgEl.clientHeight || 600;
+
+  const svg = d3.select(svgEl);
+  svg.selectAll('*').remove();
+
+  // Deep-copy to keep raw immutable across re-renders.
+  const nodes = nodesIn.map(n => ({...n}));
+  const links = edgesIn.map(e => ({source: e.from, target: e.to, t: e.t, rel: e.rel || ''}));
+
+  const root = svg.append('g');
+
+  // zoom/pan
+  svg.call(d3.zoom()
+    .scaleExtent([0.1, 8])
+    .on('zoom', ev => root.attr('transform', ev.transform)));
+
+  // Stop existing simulation
+  if (state.graph.sim) state.graph.sim.stop();
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link',
+      d3.forceLink(links).id(d => d.id)
+        .distance(d => d.t === 'defines' ? 28 : 60)
+        .strength(d => d.t === 'defines' ? 0.6 : 0.25))
+    .force('charge', d3.forceManyBody().strength(-90))
+    .force('center', d3.forceCenter(w / 2, h / 2))
+    .force('collide', d3.forceCollide().radius(d => nodeRadius(d) + 2));
+
+  state.graph.sim = sim;
+
+  const link = root.append('g').attr('class', 'links')
+    .selectAll('line')
+    .data(links)
+    .join('line')
+      .attr('class', 'glink')
+      .attr('stroke', d => EDGE_COLORS[d.t] || '#888')
+      .attr('stroke-width', d => d.t === 'defines' ? 0.7 : 1.1)
+      .attr('stroke-dasharray', d => d.t === 'defines' ? '2,2' : null);
+
+  const node = root.append('g').attr('class', 'nodes')
+    .selectAll('g.gnode')
+    .data(nodes)
+    .join('g')
+      .attr('class', 'gnode')
+      .call(d3.drag()
+        .on('start', (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+        .on('drag',  (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+        .on('end',   (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }))
+      .on('click', (ev, d) => { ev.stopPropagation(); graphSelect(d.id); });
+
+  node.append('circle')
+    .attr('r', nodeRadius)
+    .attr('fill', d => GRAPH_COLORS[d.k] || '#888');
+
+  node.append('title').text(d => `${d.id} · ${d.k}\n${d.name||''}\n${d.path||''}`);
+
+  // Labels only for files / objects (methods would be too dense).
+  node.filter(d => d.k !== 'method' || nodes.length < 200)
+    .append('text')
+      .attr('dx', d => nodeRadius(d) + 3)
+      .attr('dy', 3)
+      .text(d => d.name || d.id);
+
+  sim.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  // Click empty area → deselect.
+  svg.on('click', () => graphSelect(null));
+
+  // Re-apply selection highlight if any.
+  if (state.graph.selectedID) graphSelect(state.graph.selectedID);
+}
+
+function nodeRadius(d) {
+  if (d.k === 'file')   return 6;
+  if (d.k === 'object') return 5;
+  return 3.5;
+}
+
+function graphSelect(id) {
+  state.graph.selectedID = id;
+  const svg = d3.select('#graph-canvas svg');
+
+  if (!id) {
+    svg.selectAll('.gnode').classed('selected', false).classed('dimmed', false);
+    svg.selectAll('.glink').classed('dimmed', false);
+    $('graph-info').innerHTML = '<div class="empty">click a node to inspect</div>';
+    return;
+  }
+
+  // Build neighbor set from current rendered links.
+  const neighbors = new Set([id]);
+  svg.selectAll('.glink').each(function(d) {
+    const s = d.source.id || d.source;
+    const t = d.target.id || d.target;
+    if (s === id) neighbors.add(t);
+    if (t === id) neighbors.add(s);
+  });
+  svg.selectAll('.gnode')
+    .classed('selected', d => d.id === id)
+    .classed('dimmed', d => !neighbors.has(d.id));
+  svg.selectAll('.glink').classed('dimmed', d => {
+    const s = d.source.id || d.source;
+    const t = d.target.id || d.target;
+    return s !== id && t !== id;
+  });
+
+  graphInspect(id);
+}
+
+async function graphInspect(id) {
+  const info = $('graph-info');
+  info.innerHTML = '<div class="empty">loading…</div>';
+  try {
+    const p = await api('/api/peek?id=' + encodeURIComponent(id));
+    let html = '<div class="kv">';
+    html += `<span class="k">id</span><span class="v">${esc(p.id || id)}</span>`;
+    if (p.k)    html += `<span class="k">kind</span><span class="v">${esc(p.k)}</span>`;
+    if (p.subk) html += `<span class="k">subkind</span><span class="v">${esc(p.subk)}</span>`;
+    if (p.name) html += `<span class="k">name</span><span class="v">${esc(p.name)}</span>`;
+    if (p.fqn)  html += `<span class="k">fqn</span><span class="v">${esc(p.fqn)}</span>`;
+    if (p.path) html += `<span class="k">path</span><span class="v">${esc(p.path)}</span>`;
+    if (p.file) html += `<span class="k">file</span><span class="v">${esc(p.file)}${p.l?':'+p.l:''}</span>`;
+    if (p.lang) html += `<span class="k">lang</span><span class="v">${esc(p.lang)}</span>`;
+    html += '</div>';
+    html += `<div class="actions" style="padding:0 12px 10px 12px">
+      <button class="btn small" onclick="graphFocusOn('${esc(p.id||id)}')">Focus here</button>
+      <button class="btn small" onclick="setMode('pipeline');plPushPeek('${esc(p.id||id)}','peek ${esc(p.id||id)}')">Open in pipeline</button>
+    </div>`;
+    info.innerHTML = html;
+  } catch (e) {
+    info.innerHTML = `<div class="empty err" style="padding:10px 12px">${esc(e.message)}</div>`;
+  }
+}
+
+function graphFocusOn(id) {
+  state.graph.focusID = id;
+  $('g-focus').value = id;
+  graphRender();
 }
 
 // ────────── boot ──────────

@@ -484,6 +484,87 @@ func (a *App) Tree(svcID string) (*TreeOut, error) {
 	return out, nil
 }
 
+// ───────── graph ─────────
+
+// Graph возвращает полный граф сервиса для визуализации.
+// Включает все files, nodes (object/method), и рёбра calls/inherits/imports/defines.
+// Только resolved-рёбра (без unresolved hints).
+func (a *App) Graph(svcID string) (*GraphOut, error) {
+	st, err := a.getStore(svcID)
+	if err != nil {
+		return nil, err
+	}
+	g, err := query.LoadGraph(st.DB())
+	if err != nil {
+		return nil, err
+	}
+	out := &GraphOut{
+		Nodes: make([]GraphNodeOut, 0, len(g.Nodes)),
+		Edges: make([]GraphEdgeOut, 0, len(g.Edges)),
+	}
+	shortOf := func(kind string, id int64) string {
+		if kind == "file" {
+			return store.ShortFileID(id)
+		}
+		return store.ShortNodeID(kind, id)
+	}
+	graphShort := func(graphKind string, id int64) string {
+		// graphKind в edge — "file" | "node"; для node нужно угадать object/method.
+		// Но в edges мы знаем только generic "node". Это не подходит для short-id-префикса.
+		// Поэтому строим map node-short → kind ниже.
+		return shortOf(graphKind, id)
+	}
+	_ = graphShort
+
+	// nodes + map nodeShort -> "object"/"method" для рёбер node↔node
+	nodeKindByShort := make(map[int64]string, len(g.Nodes))
+	for _, n := range g.Nodes {
+		gn := GraphNodeOut{
+			K:    n.Kind,
+			Name: n.Name,
+			Path: n.Path,
+			Lang: n.Lang,
+			Subk: n.Subkind,
+			L:    n.Line,
+		}
+		if n.Kind == "file" {
+			gn.ID = store.ShortFileID(n.ShortID)
+		} else {
+			gn.ID = store.ShortNodeID(n.Kind, n.ShortID)
+			nodeKindByShort[n.ShortID] = n.Kind
+			if n.OwnerID != 0 {
+				gn.Owner = store.ShortNodeID(store.KindObject, n.OwnerID)
+			}
+			if n.FileID != 0 {
+				gn.File = store.ShortFileID(n.FileID)
+			}
+		}
+		out.Nodes = append(out.Nodes, gn)
+	}
+
+	resolveSide := func(kind string, id int64) string {
+		if kind == "file" {
+			return store.ShortFileID(id)
+		}
+		// node-side: смотрим в map
+		if k, ok := nodeKindByShort[id]; ok {
+			return store.ShortNodeID(k, id)
+		}
+		// fallback — method (методы преобладают)
+		return store.ShortNodeID(store.KindMethod, id)
+	}
+
+	for _, e := range g.Edges {
+		out.Edges = append(out.Edges, GraphEdgeOut{
+			From: resolveSide(e.FromKind, e.FromID),
+			To:   resolveSide(e.ToKind, e.ToID),
+			T:    e.Type,
+			Rel:  e.Relation,
+		})
+	}
+	return out, nil
+}
+
 // ───────── stats ─────────
 
 func (a *App) Stats(svcID string) (*StatsOut, error) {

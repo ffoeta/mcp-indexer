@@ -57,6 +57,7 @@ func (h *handler) register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/peek", h.peek)
 	mux.HandleFunc("/api/walk", h.walk)
 	mux.HandleFunc("/api/code", h.code)
+	mux.HandleFunc("/api/graph", h.graph)
 }
 
 // ───────── handlers ─────────
@@ -147,6 +148,15 @@ func (h *handler) walk(w http.ResponseWriter, r *http.Request) {
 	limit := atoiDefault(q.Get("limit"), 50)
 	offset := atoiDefault(q.Get("offset"), 0)
 	res, err := h.app.Walk(h.svcID, id, edge, dir, limit, offset)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, res)
+}
+
+func (h *handler) graph(w http.ResponseWriter, _ *http.Request) {
+	res, err := h.app.Graph(h.svcID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

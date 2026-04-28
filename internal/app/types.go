@@ -151,6 +151,32 @@ type StatsOut struct {
 	SearchDocs      int `json:"search_docs"`
 }
 
+// ───────── graph ─────────
+
+type GraphNodeOut struct {
+	ID    string `json:"id"`             // short: "f12" / "o7" / "m412"
+	K     string `json:"k"`              // file | object | method
+	Name  string `json:"name"`           // basename (file) или name (node)
+	Path  string `json:"path,omitempty"` // rel_path; для node — путь файла-владельца
+	Lang  string `json:"lang,omitempty"`
+	Subk  string `json:"subk,omitempty"`
+	L     int    `json:"l,omitempty"`     // start_line для node
+	Owner string `json:"owner,omitempty"` // short-id object-владельца (если есть)
+	File  string `json:"file,omitempty"`  // short-id файла, в котором лежит node
+}
+
+type GraphEdgeOut struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	T    string `json:"t"`             // calls | inherits | imports | defines
+	Rel  string `json:"rel,omitempty"` // extends | implements (для inherits)
+}
+
+type GraphOut struct {
+	Nodes []GraphNodeOut `json:"nodes"`
+	Edges []GraphEdgeOut `json:"edges"`
+}
+
 // ───────── services ─────────
 
 type ServiceOut struct {
